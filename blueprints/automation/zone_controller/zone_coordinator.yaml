@@ -1,0 +1,233 @@
+blueprint:
+  name: Zone Controller - Coordinator
+  description: >
+    House-level coordinator for a ducted HVAC zoning system. Run ONE instance.
+
+    It watches the room dampers (driven by the per-room "Room Zone" blueprint)
+    and the main HVAC unit, and it does three jobs:
+
+      1. Main unit on/off - an open room damper is the demand signal. When any
+         room damper is open the unit is switched on (to a configured mode);
+         when every room damper is closed the unit is switched off.
+
+      2. Pressure relief - the theater / bonus room damper is used as a relief
+         valve. It is opened only when every other (non-hallway) damper is
+         closed, guaranteeing at least the hallway (always open) plus the relief
+         path stay open so the duct is never over-pressurized.
+
+      3. Home / away - when nobody is home (a home/away toggle is off AND nobody
+         is inside a wide ~5 mi presence zone), conditioning is reduced.
+
+    Damper polarity is INVERTED (normally-open): off = OPEN, on = CLOSED. This
+    blueprint opens the relief damper with switch.turn_off and closes it with
+    switch.turn_on.
+
+    Away note: the default away action sets an eco preset rather than turning the
+    unit off, so an always-on room (e.g. a server room) keeps cooling while the
+    house is empty. Only choose "Turn off" if you have no room that must be
+    conditioned regardless of occupancy.
+  domain: automation
+  source_url: https://github.com/aryanakh/zone-controller/blob/main/blueprints/automation/zone_controller/zone_coordinator.yaml
+  input:
+    hvac_section:
+      name: HVAC & Dampers
+      icon: mdi:hvac
+      collapsed: false
+      input:
+        main_climate:
+          name: Main HVAC climate entity
+          description: The upstairs unit this coordinator switches on and off.
+          selector:
+            entity:
+              filter:
+                - domain: climate
+        zone_dampers:
+          name: Room damper switches (all non-relief dampers)
+          description: >
+            Every room damper switch EXCEPT the relief valve - i.e. nursery,
+            server room and both master bedroom dampers. off = open, on = closed.
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: switch
+        relief_damper:
+          name: Relief valve damper switch
+          description: The theater / bonus room damper, used as the pressure relief valve.
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: switch
+        active_hvac_mode:
+          name: Active HVAC mode
+          description: The mode the unit is switched to when a room asks for air.
+          default: heat_cool
+          selector:
+            select:
+              options:
+                - label: Heat / Cool (recommended - serves rooms in both directions)
+                  value: heat_cool
+                - label: Cool only
+                  value: cool
+                - label: Heat only
+                  value: heat
+
+    presence_section:
+      name: Home / Away
+      icon: mdi:home-account
+      collapsed: false
+      input:
+        home_occupied:
+          name: Home occupied toggle
+          description: An input_boolean that is on while the house should be treated as occupied.
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        presence_zone:
+          name: Wide presence zone (optional)
+          description: >
+            A large (~5 mi) HA zone. If anyone is inside it the house is treated
+            as occupied/approaching. Leave unset to rely only on the toggle.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: zone
+        away_action:
+          name: Away action
+          description: What to do while nobody is home.
+          default: eco_preset
+          selector:
+            select:
+              options:
+                - label: Set eco preset (keeps the unit running - safe for always-on rooms)
+                  value: eco_preset
+                - label: Do nothing special (rely on occupancy-gated rooms)
+                  value: none
+                - label: Turn the unit off (WARNING - stops all rooms, incl. server room)
+                  value: turn_off
+        away_preset:
+          name: Away preset name
+          description: Preset to select while away (used by the "Set eco preset" away action).
+          default: eco
+          selector:
+            text:
+        home_preset:
+          name: Home preset name
+          description: Preset to restore when returning home (used by the "Set eco preset" away action).
+          default: none
+          selector:
+            text:
+
+mode: restart
+max_exceeded: silent
+
+variables:
+  main_climate: !input main_climate
+  zone_dampers: !input zone_dampers
+  relief_damper: !input relief_damper
+  active_hvac_mode: !input active_hvac_mode
+  home_occupied: !input home_occupied
+  presence_zone: !input presence_zone
+  away_action: !input away_action
+  away_preset: !input away_preset
+  home_preset: !input home_preset
+  # --- derived state ---
+  home_toggle: "{{ is_state(home_occupied, 'on') }}"
+  anyone_near: >
+    {{ presence_zone is string and (states(presence_zone) | int(0) > 0) }}
+  home: "{{ home_toggle or anyone_near }}"
+  # A room damper is OPEN when its switch is off (inverted).
+  any_open: "{{ zone_dampers | select('is_state', 'off') | list | count > 0 }}"
+  all_others_closed: "{{ zone_dampers | reject('is_state', 'off') | list | count == (zone_dampers | count) }}"
+  main_off: "{{ is_state(main_climate, 'off') }}"
+  current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
+
+trigger:
+  - platform: state
+    entity_id: !input zone_dampers
+    id: dampers
+  - platform: state
+    entity_id: !input main_climate
+    id: main
+  - platform: state
+    entity_id: !input home_occupied
+    id: presence
+  - platform: homeassistant
+    event: start
+  - platform: time_pattern
+    minutes: "/2"
+    id: resync
+
+condition: []
+
+action:
+  # --- 1. Pressure relief valve ---------------------------------------------
+  # Open the relief damper (switch OFF) only when every other damper is closed.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ all_others_closed }}"
+        sequence:
+          - service: switch.turn_off
+            target:
+              entity_id: !input relief_damper
+    default:
+      - service: switch.turn_on
+        target:
+          entity_id: !input relief_damper
+
+  # --- 2. Away: eco preset restore/apply -------------------------------------
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ away_action == 'eco_preset' and not home and current_preset != away_preset }}"
+        sequence:
+          - service: climate.set_preset_mode
+            target:
+              entity_id: !input main_climate
+            data:
+              preset_mode: !input away_preset
+      - conditions:
+          - condition: template
+            value_template: "{{ away_action == 'eco_preset' and home and current_preset == away_preset }}"
+        sequence:
+          - service: climate.set_preset_mode
+            target:
+              entity_id: !input main_climate
+            data:
+              preset_mode: !input home_preset
+
+  # --- 3. Main unit on/off ---------------------------------------------------
+  - choose:
+      # Hard away-off (opt-in): stop the unit entirely while away.
+      - conditions:
+          - condition: template
+            value_template: "{{ not home and away_action == 'turn_off' }}"
+        sequence:
+          - condition: template
+            value_template: "{{ not main_off }}"
+          - service: climate.turn_off
+            target:
+              entity_id: !input main_climate
+      # A room wants air and the unit is off -> switch it on to the active mode.
+      # (Only when off, so a manual mode choice while running is respected.)
+      - conditions:
+          - condition: template
+            value_template: "{{ any_open and main_off }}"
+        sequence:
+          - service: climate.set_hvac_mode
+            target:
+              entity_id: !input main_climate
+            data:
+              hvac_mode: !input active_hvac_mode
+      # Every room is satisfied -> switch the unit off.
+      - conditions:
+          - condition: template
+            value_template: "{{ not any_open and not main_off }}"
+        sequence:
+          - service: climate.turn_off
+            target:
+              entity_id: !input main_climate

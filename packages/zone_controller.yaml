@@ -1,0 +1,102 @@
+# =============================================================================
+# Zone Controller - example Home Assistant package
+# =============================================================================
+# This package creates the helper entities the Zone Controller blueprints need:
+# per-room setpoints (input_number), the sleep-mode and home/away toggles
+# (input_boolean), and a wide (~5 mi) presence zone.
+#
+# To use it:
+#   1. Ensure packages are enabled in configuration.yaml, e.g.:
+#          homeassistant:
+#            packages: !include_dir_named packages
+#      then place this file at   <config>/packages/zone_controller.yaml
+#   2. Replace every `# TODO` below with your real entity IDs / coordinates.
+#   3. Restart Home Assistant (or reload the relevant helpers).
+#
+# Temperature values assume °F. Adjust to your unit system if needed.
+#
+# Damper reminder: the damper switches are INVERTED / normally-open
+# (off = OPEN, on = CLOSED). The blueprints handle that - you only need to
+# point them at the correct switch entities.
+#
+# TODO entities you must already have (created by ESPHome / your integrations):
+#   - Room temperature sensors:
+#       sensor.nursery_temperature
+#       sensor.server_room_temperature
+#       sensor.master_bedroom_temperature
+#   - Master bedroom occupancy:
+#       binary_sensor.master_bedroom_occupancy
+#   - Damper switches (off = open, on = closed):
+#       switch.damper_nursery
+#       switch.damper_server_room
+#       switch.damper_master_bedroom_1
+#       switch.damper_master_bedroom_2
+#       switch.damper_theater          (relief valve)
+#   - Main upstairs unit:
+#       climate.upstairs_hvac
+# =============================================================================
+
+input_number:
+  nursery_heat_sp:
+    name: Nursery heat setpoint
+    min: 60
+    max: 78
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:fire
+    initial: 68
+
+  nursery_cool_sp:
+    name: Nursery cool setpoint
+    min: 65
+    max: 85
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:snowflake
+    initial: 71
+
+  server_cool_sp:
+    name: Server room cool setpoint
+    min: 65
+    max: 90
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:server
+    initial: 80
+
+  master_cool_sp:
+    name: Master bedroom cool setpoint (day)
+    min: 65
+    max: 85
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:bed
+    initial: 75
+
+  master_sleep_cool_sp:
+    name: Master bedroom cool setpoint (sleep)
+    min: 60
+    max: 80
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:bed-clock
+    initial: 68
+
+input_boolean:
+  zc_sleep_mode:
+    name: Sleep mode
+    icon: mdi:power-sleep
+
+  zc_home_occupied:
+    name: Home occupied
+    icon: mdi:home-account
+
+# A wide (~5 mi) zone. Anyone inside it counts as home/approaching.
+# 5 miles ~= 8047 meters.  # TODO: set latitude/longitude to your home.
+zone:
+  - name: Home Wide
+    latitude: 0.0        # TODO
+    longitude: 0.0       # TODO
+    radius: 8047
+    icon: mdi:map-marker-radius
+    passive: true
