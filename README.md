@@ -113,7 +113,7 @@ entities come from.
 | Priority | Room | Damper(s) | Mode | Setpoints | Enable toggle |
 |:--:|------|:--:|------|-----------|:--:|
 | 1 | Nursery | 1 | standard, tight band | Heat < 68 °F, Cool > 71 °F | ✅ |
-| 2 | Master bedroom | 2 | occupancy, cool-only | Cool > 75 °F day / **> 68 °F sleep** | ✅ |
+| 2 | Master bedroom | 2 | occupancy, cool-only | Cool > 75 °F day / **> 68 °F sleep** · pre-cools from ~8pm when home | ✅ |
 | 3 | Server room | 1 | always-on, cool-only | Cool > 80 °F | ✅ |
 | 4 | Theater / bonus | 1 | relief valve | — (automatic) | — |
 | — | Hallway | 0 | always open | — | — |
@@ -185,6 +185,8 @@ Full step-by-step field values and a verification checklist are in
 - **Enable/disable per room** — flip a toggle to drop a room out of the system.
 - **Anti-short-cycle** — a minimum heat↔cool changeover protects the compressor.
 - **Sleep mode** — the master bedroom drops to a colder target at night.
+- **Scheduled activation** — a room can pre-cool on a daily window when the
+  house is occupied (the master bedroom starts around 8pm for a cold bed).
 - **Home/away + proximity** — conditioning is reduced when the house is empty,
   resuming when someone comes within ~5 mi.
 - **Pressure relief** — the theater damper opens automatically so the duct is

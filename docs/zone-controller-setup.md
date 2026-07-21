@@ -97,6 +97,14 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.zc_sleep_mode`
 - Sleep cool setpoint: `input_number.master_sleep_cool_sp`
+- **Scheduled activation** (pre-cool for sleep):
+  - Active after: **20:00:00** · Active until: **07:00:00**
+  - Schedule requires house occupied: `input_boolean.zc_home_occupied`
+
+  This makes the master bedroom start cooling around 8pm whenever the house is
+  occupied, on top of its occupancy behaviour (the window runs overnight to
+  07:00). It becomes active if the room is occupied **or** it's after 8pm and
+  someone is home. Latency is up to the ~5 min room resync, hence "around" 8pm.
 
 ### Server room (priority 3 — always on, cool-only)
 - Room enable toggle: `input_boolean.server_enabled`

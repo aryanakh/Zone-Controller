@@ -194,6 +194,39 @@ blueprint:
               filter:
                 - domain: input_number
 
+    schedule_section:
+      name: Scheduled Activation (optional)
+      icon: mdi:clock-outline
+      collapsed: true
+      input:
+        active_after:
+          name: Active after (time of day)
+          description: >
+            Optional. Makes the room eligible for conditioning during a daily
+            window, on top of its zone mode. Example: set to 20:00 so the master
+            bedroom starts pre-cooling around 8pm. Set BOTH after and until to
+            use this; the window may cross midnight (e.g. 20:00 -> 07:00).
+          default: {}
+          selector:
+            time:
+        active_until:
+          name: Active until (time of day)
+          description: End of the daily active window. Set together with "Active after".
+          default: {}
+          selector:
+            time:
+        schedule_requires_home:
+          name: Schedule requires house occupied
+          description: >
+            Optional input_boolean (e.g. the house occupied toggle). When set, the
+            scheduled window only activates the room while this is on - i.e. only
+            begin pre-cooling if the house is occupied.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+
 mode: restart
 max_exceeded: silent
 
@@ -211,6 +244,9 @@ variables:
   hysteresis: !input hysteresis
   sleep_boolean: !input sleep_boolean
   sleep_cool_setpoint: !input sleep_cool_setpoint
+  active_after: !input active_after
+  active_until: !input active_until
+  schedule_requires_home: !input schedule_requires_home
   # --- derived state ---
   temp_raw: "{{ states(room_temp_sensor) }}"
   temp_valid: "{{ is_number(temp_raw) }}"
@@ -234,8 +270,20 @@ variables:
        else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
          if zone_mode == 'occupancy'
        else true }}
-  # Hard gate: enabled AND mode-eligible.
-  active: "{{ enabled_on and mode_active }}"
+  # Optional daily schedule window (may cross midnight). Both times must be set.
+  has_schedule: "{{ active_after is string and active_until is string }}"
+  now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  in_window: >
+    {{ false if not has_schedule
+       else (active_after <= now_hms < active_until)
+         if (active_after <= active_until)
+       else (now_hms >= active_after or now_hms < active_until) }}
+  schedule_home_ok: >
+    {{ schedule_requires_home is not string
+       or is_state(schedule_requires_home, 'on') }}
+  schedule_active: "{{ has_schedule and in_window and schedule_home_ok }}"
+  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window).
+  active: "{{ enabled_on and (mode_active or schedule_active) }}"
   # Raw directional demand with hysteresis - independent of the unit's mode.
   raw_want_cool: "{{ enable_cool and temp_valid and temp > (cool_sp + hysteresis) }}"
   raw_want_heat: >
