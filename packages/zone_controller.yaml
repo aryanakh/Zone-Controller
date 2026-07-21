@@ -83,6 +83,19 @@ input_number:
     initial: 68
 
 input_boolean:
+  # Per-room enable/disable. Off = room publishes no demand, damper closed.
+  nursery_enabled:
+    name: Nursery enabled
+    icon: mdi:baby-carriage
+
+  server_enabled:
+    name: Server room enabled
+    icon: mdi:server
+
+  master_enabled:
+    name: Master bedroom enabled
+    icon: mdi:bed
+
   zc_sleep_mode:
     name: Sleep mode
     icon: mdi:power-sleep
@@ -90,6 +103,32 @@ input_boolean:
   zc_home_occupied:
     name: Home occupied
     icon: mdi:home-account
+
+# Per-room raw demand (heat / cool / none), written by the Room Zone blueprint
+# and read by the Coordinator in priority order.
+input_text:
+  nursery_demand:
+    name: Nursery demand
+    initial: none
+    icon: mdi:baby-carriage
+
+  master_demand:
+    name: Master bedroom demand
+    initial: none
+    icon: mdi:bed
+
+  server_demand:
+    name: Server room demand
+    initial: none
+    icon: mdi:server
+
+# Remembers when the unit last changed direction (compressor anti-short-cycle).
+input_datetime:
+  zc_last_changeover:
+    name: Last HVAC changeover
+    has_date: true
+    has_time: true
+    icon: mdi:swap-horizontal
 
 # A wide (~5 mi) zone. Anyone inside it counts as home/approaching.
 # 5 miles ~= 8047 meters.  # TODO: set latitude/longitude to your home.

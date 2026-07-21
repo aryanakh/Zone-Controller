@@ -1,29 +1,60 @@
 blueprint:
   name: Zone Controller - Room Zone
   description: >
-    Per-room damper control for a ducted HVAC zoning system.
+    Per-room damper control for a ducted HVAC zoning system. Instantiate once per
+    conditioned room (nursery, master bedroom, server room). The theater / bonus
+    (relief valve) room does NOT use this blueprint - its damper is owned by the
+    Coordinator.
 
-    This blueprint gives one room its own "virtual thermostat" behaviour. It
-    reads the room's temperature sensor, compares it against low/high setpoints
-    (from input_number helpers), and opens or closes that room's motorized
-    damper(s) accordingly. Instantiate it once per room.
+    What it does:
+      1. Reads the room's temperature sensor and compares it to low/high
+         setpoints (input_number helpers) to compute a *raw demand*:
+         heat / cool / none - independent of what the unit is doing right now.
+      2. Publishes that raw demand to an input_text helper so the Coordinator can
+         arbitrate direction between rooms by priority.
+      3. Opens this room's damper only when the room is enabled, allowed to run,
+         and its demand matches the direction the unit is currently delivering.
 
-    IMPORTANT - damper polarity: the dampers are normally-open and wired so that
-    the switch is INVERTED. `off` = damper OPEN (air flows), `on` = damper CLOSED
-    (air cut off). This blueprint therefore calls switch.turn_off to give a room
-    air and switch.turn_on to cut it off. On power loss the dampers spring open,
-    which is the intended failsafe.
+    IMPORTANT - damper polarity: the dampers are normally-open and the switch is
+    INVERTED. `off` = damper OPEN (air flows), `on` = damper CLOSED (air cut off).
+    So this blueprint calls switch.turn_off to give a room air and switch.turn_on
+    to cut it off. On power loss the dampers spring open (intended failsafe).
 
     Zone modes:
-      - standard    : conditioned whenever the room is out of band (e.g. nursery)
-      - always_on   : never gated by occupancy/schedule (e.g. server room)
-      - occupancy   : conditioned only when the occupancy sensor reports 'on'
+      - standard    : eligible whenever out of band (e.g. nursery)
+      - always_on   : never gated by occupancy (e.g. server room)
+      - occupancy   : eligible only while the occupancy sensor is 'on'
 
-    The theater / bonus (relief valve) room should NOT use this blueprint - its
-    damper is owned exclusively by the Zone Controller Coordinator blueprint.
+    The Enable toggle is a hard master switch: while off, the room publishes no
+    demand and its damper is closed.
   domain: automation
   source_url: https://github.com/aryanakh/zone-controller/blob/main/blueprints/automation/zone_controller/room_zone.yaml
   input:
+    control_section:
+      name: Control
+      icon: mdi:toggle-switch
+      collapsed: false
+      input:
+        enabled:
+          name: Room enable toggle
+          description: >
+            An input_boolean that turns this room on/off. While off the room
+            publishes no demand and its damper is forced closed.
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        demand_helper:
+          name: Demand helper (input_text)
+          description: >
+            An input_text this room writes its raw demand to (heat / cool / none).
+            The Coordinator reads these, in priority order, to decide the unit's
+            direction. Each room needs its own dedicated helper.
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+
     sensors_section:
       name: Sensors & Entities
       icon: mdi:thermometer
@@ -51,10 +82,9 @@ blueprint:
           name: Main HVAC climate entity
           description: >
             The upstairs unit's climate entity. Read only - used to know the
-            active direction (heat / cool / heat_cool / off) so the room only
-            asks for air in a direction the unit can currently provide. When the
-            unit is off, either direction may request air (this lets a room wake
-            the unit back up via the coordinator).
+            direction the unit is currently delivering (heat / cool / heat_cool /
+            off). The room opens its damper only when its demand matches that
+            direction; the Coordinator is what sets the direction.
           selector:
             entity:
               filter:
@@ -83,7 +113,8 @@ blueprint:
           description: >
             Optional input_number helper holding the temperature below which the
             room asks for heating. Leave unset for cool-only rooms (server room,
-            master bedroom).
+            master bedroom). Keep it at least ~2° below the cool setpoint so the
+            room can't be cooled into needing heat.
           default: {}
           selector:
             entity:
@@ -167,6 +198,8 @@ mode: restart
 max_exceeded: silent
 
 variables:
+  enabled: !input enabled
+  demand_helper: !input demand_helper
   zone_mode: !input zone_mode
   occupancy_sensor: !input occupancy_sensor
   room_temp_sensor: !input room_temp_sensor
@@ -183,6 +216,7 @@ variables:
   temp_valid: "{{ is_number(temp_raw) }}"
   temp: "{{ temp_raw | float(0) }}"
   main_mode: "{{ states(main_climate) }}"
+  enabled_on: "{{ is_state(enabled, 'on') }}"
   # Effective cool setpoint (sleep override when configured and active).
   # Optional entity inputs are a plain string when set and an empty dict when
   # unset, so `is string` reliably detects "configured".
@@ -194,25 +228,29 @@ variables:
        if sleep_active else (states(cool_setpoint) | float(0)) }}
   has_heat_sp: "{{ heat_setpoint is string and is_number(states(heat_setpoint)) }}"
   heat_sp: "{{ states(heat_setpoint) | float(0) if has_heat_sp else 0 }}"
-  # Is this room currently allowed to be conditioned?
-  active: >
+  # Is this room allowed to run right now (mode gate)?
+  mode_active: >
     {{ true if zone_mode == 'always_on'
        else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
          if zone_mode == 'occupancy'
        else true }}
-  # Directional demand with hysteresis
-  want_cool: "{{ enable_cool and temp_valid and temp > (cool_sp + hysteresis) }}"
-  want_heat: >
+  # Hard gate: enabled AND mode-eligible.
+  active: "{{ enabled_on and mode_active }}"
+  # Raw directional demand with hysteresis - independent of the unit's mode.
+  raw_want_cool: "{{ enable_cool and temp_valid and temp > (cool_sp + hysteresis) }}"
+  raw_want_heat: >
     {{ enable_heat and temp_valid and has_heat_sp
        and temp < (heat_sp - hysteresis) }}
-  # Filter by what the unit can currently deliver. When off, allow either so the
-  # room can request air and let the coordinator restart the unit.
-  demand: >
-    {{ want_cool if main_mode == 'cool'
-       else want_heat if main_mode == 'heat'
-       else (want_cool or want_heat) if main_mode in ['heat_cool', 'off']
-       else false }}
-  should_open: "{{ active and demand }}"
+  raw_demand: >
+    {{ 'cool' if (active and raw_want_cool)
+       else 'heat' if (active and raw_want_heat)
+       else 'none' }}
+  # Open only when the room's demand matches the direction the unit delivers.
+  should_open: >
+    {{ active and (
+         (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
+         (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
+       ) }}
 
 trigger:
   - platform: state
@@ -221,6 +259,9 @@ trigger:
   - platform: state
     entity_id: !input main_climate
     id: main
+  - platform: state
+    entity_id: !input enabled
+    id: enabled
   - platform: homeassistant
     event: start
   - platform: time_pattern
@@ -230,20 +271,25 @@ trigger:
 condition: []
 
 action:
-  # Only act when we have a valid temperature reading.
+  # Hold on an invalid/missing temperature reading - don't publish or move.
+  - condition: template
+    value_template: "{{ temp_valid }}"
+
+  # Publish this room's raw demand for the Coordinator (no-op if unchanged).
+  - service: input_text.set_value
+    target:
+      entity_id: !input demand_helper
+    data:
+      value: "{{ raw_demand }}"
+
+  # Drive the damper. OPEN => switch OFF, CLOSED => switch ON (inverted).
   - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ not temp_valid }}"
-        sequence: []
-      # Give the room air: dampers OPEN => switch OFF (inverted).
       - conditions:
           - condition: template
             value_template: "{{ should_open }}"
         sequence:
           - service: switch.turn_off
             target: !input damper_switches
-    # Otherwise cut the room off: dampers CLOSED => switch ON (inverted).
     default:
       - service: switch.turn_on
         target: !input damper_switches
