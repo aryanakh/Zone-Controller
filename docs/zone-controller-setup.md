@@ -86,7 +86,8 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Main HVAC climate entity: `climate.upstairs_hvac`
 - Cool setpoint: `input_number.nursery_cool_sp` · Enable cooling: **on**
 - Heat setpoint: `input_number.nursery_heat_sp` · Enable heating: **on**
-- Hysteresis: **0.3** · Zone mode: **Standard**
+- Hysteresis: **0.3** (half-band on each side → the room settles within ~0.6° of
+  the setpoint) · Zone mode: **Standard**
 
 ### Master bedroom (priority 2 — occupancy, cool-only, sleep, 2 dampers)
 - Room enable toggle: `input_boolean.master_enabled`
@@ -98,15 +99,19 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Heat setpoint: *(leave unset)* · Enable heating: **off**
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.zc_sleep_mode`
-- Sleep cool setpoint: `input_number.master_sleep_cool_sp`
+- Sleep / pre-cool cool setpoint: `input_number.master_sleep_cool_sp`
 - **Scheduled activation** (pre-cool for sleep):
   - Active after: **20:00:00** · Active until: **07:00:00**
   - Schedule requires house occupied: `input_boolean.zc_home_occupied`
 
-  This makes the master bedroom start cooling around 8pm whenever the house is
-  occupied, on top of its occupancy behaviour (the window runs overnight to
-  07:00). It becomes active if the room is occupied **or** it's after 8pm and
-  someone is home. Latency is up to the ~5 min room resync, hence "around" 8pm.
+  This makes the master bedroom start pre-cooling around 8pm whenever the house
+  is occupied, on top of its occupancy behaviour (the window runs overnight to
+  07:00). Inside the window the room automatically switches to the **68 °F**
+  sleep/pre-cool setpoint — you do **not** need to flip Sleep mode; the toggle is
+  just a manual override to pull the target down at any other time. So at, say,
+  9pm and 74° the room will already be cooling toward 68. It becomes active if
+  the room is occupied **or** it's after 8pm and someone is home. Latency is up
+  to the ~5 min room resync, hence "around" 8pm.
 
 ### Server room (priority 3 — always on, cool-only)
 - Room enable toggle: `input_boolean.server_enabled`
@@ -133,7 +138,7 @@ Create **one** automation from the **Coordinator** blueprint:
   `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`,
   `switch.damper_server_room`
 - Relief valve damper switch: `switch.damper_theater`
-- Minimum changeover time: **10** (minutes)
+- Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Home occupied toggle: `input_boolean.zc_home_occupied`
 - Wide presence zone: `zone.home_wide`
@@ -183,18 +188,22 @@ satisfied. The target is clamped between the floor and ceiling.
 3. **Priority conflict.** Make the nursery call for heat while the master calls
    for cooling (adjust setpoints). The unit should go/stay in **heat** for the
    nursery; the master's dampers stay **on** (closed) until the nursery is
-   satisfied — subject to the changeover timer.
-4. **Anti-short-cycle.** Watch `input_datetime.zc_last_changeover` — after a
-   direction change, the unit won't flip heat↔cool again until
+   satisfied. Priority is never yielded to the lower-priority master — the only
+   thing that can briefly delay the switch to heat is the compressor cooldown.
+4. **Compressor reversal cooldown.** Watch `input_datetime.zc_last_changeover` —
+   after a direction change, the unit won't reverse heat↔cool again until
    `min_changeover` minutes pass (unless no room is still calling the current
-   direction).
+   direction). With the default of 3 min, the nursery is served ~3 min after the
+   last reversal at worst; set the cooldown to 0 for instant reversal.
 5. **Relief valve.** Force every room damper closed (each switch `on`):
    `switch.damper_theater` goes **off** (open). Open any room damper and the
    theater damper goes **on** (closed).
 6. **Main on/off.** With a room calling, the unit switches on in the winning
    direction. With every room satisfied/disabled, it switches off.
-7. **Sleep mode.** Turn on `input_boolean.zc_sleep_mode`; the master bedroom uses
-   the 68 °F sleep cool setpoint.
+7. **Sleep / pre-cool.** Turn on `input_boolean.zc_sleep_mode`; the master
+   bedroom uses the 68 °F sleep cool setpoint. The same 68 °F target applies
+   automatically inside the 20:00–07:00 window (house occupied) without touching
+   the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.zc_home_occupied` with nobody in
    `zone.home_wide`; the configured away action fires (eco preset by default).
 9. **Force-run.** With force-run enabled, set the central thermostat to a mild

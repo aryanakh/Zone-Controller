@@ -12,10 +12,13 @@ blueprint:
          the unit's direction. Lower-priority rooms wanting the opposite direction
          wait (their dampers stay closed) until it is satisfied.
 
-      2. Anti-short-cycle - it will not flip heat <-> cool again until a minimum
-         changeover time has passed, UNLESS no room is still calling in the
-         current direction (in which case flipping is not a short-cycle). It
-         stamps the last changeover into an input_datetime helper.
+      2. Compressor reversal cooldown - it will not flip heat <-> cool again
+         until a short hardware-protection cooldown has passed, UNLESS no room is
+         still calling in the current direction (in which case flipping is not a
+         short-cycle). This cooldown is the ONLY thing that can delay serving a
+         higher-priority room; priority itself is never yielded to a
+         lower-priority room. It stamps the last changeover into an
+         input_datetime helper.
 
       3. Pressure relief - the theater / bonus damper is a relief valve, opened
          only when every other (non-hallway) damper is closed, so the hallway
@@ -79,12 +82,16 @@ blueprint:
               filter:
                 - domain: switch
         min_changeover:
-          name: Minimum changeover time (minutes)
+          name: Compressor reversal cooldown (minutes)
           description: >
-            Compressor protection. The unit will not flip heat <-> cool again
-            until this many minutes have passed since the last direction change
-            (unless nothing is still calling in the current direction).
-          default: 10
+            Hardware protection ONLY. The unit will not reverse heat <-> cool
+            again until this many minutes have passed since the last direction
+            change (unless nothing is still calling in the current direction, in
+            which case reversing is not a short-cycle). This is the ONLY thing
+            that can delay serving a higher-priority room - priority is never
+            yielded to a lower-priority room. Keep it short; set 0 for instant
+            reversal.
+          default: 3
           selector:
             number:
               min: 0

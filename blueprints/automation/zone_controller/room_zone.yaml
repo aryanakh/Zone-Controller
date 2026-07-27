@@ -129,10 +129,12 @@ blueprint:
         hysteresis:
           name: Hysteresis (°)
           description: >
-            Deadband to prevent rapid damper chatter. A room stops asking for
-            cooling only once it drops this far below the cool setpoint (and
-            similarly for heating). Use a small value (~0.3) for tight rooms
-            like a nursery.
+            Half of the anti-chatter deadband, applied on each side of the
+            setpoint. Cooling engages above (cool setpoint + this) and does not
+            release until the room drops below (cool setpoint - this); heating is
+            mirrored. So a room settles within a band of twice this value around
+            the setpoint. Use a small value (~0.3) for tight rooms like a
+            nursery; 0 gives a bare threshold (may chatter).
           default: 0.5
           selector:
             number:
@@ -179,15 +181,19 @@ blueprint:
           description: >
             Optional input_boolean. While on, the room uses the sleep cool
             setpoint instead of its normal cool setpoint (e.g. master bedroom
-            drops from 75 to 68 at night).
+            drops from 75 to 68 at night). This is a manual "do it now" override;
+            the scheduled window below applies the same setpoint automatically.
           default: {}
           selector:
             entity:
               filter:
                 - domain: input_boolean
         sleep_cool_setpoint:
-          name: Sleep cool setpoint
-          description: Optional input_number used as the cool setpoint while sleep mode is on.
+          name: Sleep / pre-cool cool setpoint
+          description: >
+            Optional input_number used as the cool setpoint while Sleep mode is
+            on OR while inside the scheduled activation window below. Set this to
+            enable evening pre-cool (e.g. master bedroom targets 68 from 8pm).
           default: {}
           selector:
             entity:
@@ -203,9 +209,11 @@ blueprint:
           name: Active after (time of day)
           description: >
             Optional. Makes the room eligible for conditioning during a daily
-            window, on top of its zone mode. Example: set to 20:00 so the master
-            bedroom starts pre-cooling around 8pm. Set BOTH after and until to
-            use this; the window may cross midnight (e.g. 20:00 -> 07:00).
+            window, on top of its zone mode, AND (when a sleep/pre-cool setpoint
+            is configured) switches the room to that colder target for the
+            window. Example: set to 20:00 so the master bedroom starts
+            pre-cooling toward its night setpoint around 8pm. Set BOTH after and
+            until to use this; the window may cross midnight (e.g. 20:00 -> 07:00).
           default: {}
           selector:
             time:
@@ -253,24 +261,8 @@ variables:
   temp: "{{ temp_raw | float(0) }}"
   main_mode: "{{ states(main_climate) }}"
   enabled_on: "{{ is_state(enabled, 'on') }}"
-  # Effective cool setpoint (sleep override when configured and active).
-  # Optional entity inputs are a plain string when set and an empty dict when
-  # unset, so `is string` reliably detects "configured".
-  sleep_active: >
-    {{ sleep_boolean is string and is_state(sleep_boolean, 'on')
-       and sleep_cool_setpoint is string }}
-  cool_sp: >
-    {{ (states(sleep_cool_setpoint) | float(0))
-       if sleep_active else (states(cool_setpoint) | float(0)) }}
-  has_heat_sp: "{{ heat_setpoint is string and is_number(states(heat_setpoint)) }}"
-  heat_sp: "{{ states(heat_setpoint) | float(0) if has_heat_sp else 0 }}"
-  # Is this room allowed to run right now (mode gate)?
-  mode_active: >
-    {{ true if zone_mode == 'always_on'
-       else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
-         if zone_mode == 'occupancy'
-       else true }}
   # Optional daily schedule window (may cross midnight). Both times must be set.
+  # Computed early because it also drives the pre-cool setpoint below.
   has_schedule: "{{ active_after is string and active_until is string }}"
   now_hms: "{{ now().strftime('%H:%M:%S') }}"
   in_window: >
@@ -282,13 +274,42 @@ variables:
     {{ schedule_requires_home is not string
        or is_state(schedule_requires_home, 'on') }}
   schedule_active: "{{ has_schedule and in_window and schedule_home_ok }}"
+  # Effective cool setpoint. Use the sleep/pre-cool setpoint (when configured)
+  # whenever Sleep mode is on OR we are inside the scheduled window, so the
+  # evening window pre-cools toward the night target instead of the day target.
+  # Optional entity inputs are a plain string when set and an empty dict when
+  # unset, so `is string` reliably detects "configured".
+  use_night_sp: >
+    {{ sleep_cool_setpoint is string and (
+         (sleep_boolean is string and is_state(sleep_boolean, 'on'))
+         or schedule_active ) }}
+  cool_sp: >
+    {{ (states(sleep_cool_setpoint) | float(0)) if use_night_sp
+       else (states(cool_setpoint) | float(0)) }}
+  has_heat_sp: "{{ heat_setpoint is string and is_number(states(heat_setpoint)) }}"
+  heat_sp: "{{ states(heat_setpoint) | float(0) if has_heat_sp else 0 }}"
+  # Is this room allowed to run right now (mode gate)?
+  mode_active: >
+    {{ true if zone_mode == 'always_on'
+       else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
+         if zone_mode == 'occupancy'
+       else true }}
   # Hard gate: enabled AND (mode-eligible OR inside the scheduled window).
   active: "{{ enabled_on and (mode_active or schedule_active) }}"
-  # Raw directional demand with hysteresis - independent of the unit's mode.
-  raw_want_cool: "{{ enable_cool and temp_valid and temp > (cool_sp + hysteresis) }}"
+  # Raw directional demand with a true two-sided deadband, independent of the
+  # unit's mode. The room's own last-published demand (in demand_helper) is the
+  # state memory: engage above cool_sp+hyst, then hold 'cool' until temp drops
+  # below cool_sp-hyst (mirrored for heat). hysteresis=0 => a bare threshold.
+  was_cool: "{{ is_state(demand_helper, 'cool') }}"
+  was_heat: "{{ is_state(demand_helper, 'heat') }}"
+  raw_want_cool: >
+    {{ enable_cool and temp_valid and (
+         temp > (cool_sp + hysteresis)
+         or (was_cool and temp > (cool_sp - hysteresis)) ) }}
   raw_want_heat: >
-    {{ enable_heat and temp_valid and has_heat_sp
-       and temp < (heat_sp - hysteresis) }}
+    {{ enable_heat and temp_valid and has_heat_sp and (
+         temp < (heat_sp - hysteresis)
+         or (was_heat and temp < (heat_sp + hysteresis)) ) }}
   raw_demand: >
     {{ 'cool' if (active and raw_want_cool)
        else 'heat' if (active and raw_want_heat)

@@ -70,10 +70,12 @@ its turn.
 Runs once per conditioned room (nursery, master bedroom, server room). For its
 room it:
 - reads the temperature sensor and compares it to **cool / heat setpoints**
-  (with a hysteresis deadband) to compute a raw demand of `heat`, `cool`, or
-  `none`;
+  (with a true two-sided hysteresis deadband, so it engages above the setpoint
+  and won't release until back below it — no chatter) to compute a raw demand of
+  `heat`, `cool`, or `none`;
 - respects a **zone mode** — `standard`, `always_on`, or `occupancy`;
-- applies an optional **sleep-mode** cool setpoint override;
+- applies a colder **sleep / pre-cool** setpoint — on demand via a Sleep toggle,
+  and automatically during a scheduled evening window;
 - honours a hard **enable/disable** toggle;
 - writes its demand to an `input_text` helper and opens its damper **only when
   its demand matches the direction the unit is currently delivering**.
@@ -86,8 +88,9 @@ room it:
 Runs once for the whole house. It:
 - reads the room demand helpers **in priority order** and sets the unit's
   direction to the highest-priority room that is calling;
-- enforces an **anti-short-cycle** minimum changeover time before flipping
-  heat↔cool (unless nothing is still calling in the current direction);
+- enforces a short **compressor reversal cooldown** (default 3 min) before
+  flipping heat↔cool (unless nothing is still calling in the current direction);
+  this cooldown is the only thing that can delay serving a higher-priority room;
 - turns the unit **off** when no room is calling, and back on when one is;
 - optionally **force-runs the setpoint** — pushing the central thermostat's
   target past the hallway temperature so the unit runs for a room that needs it,
@@ -125,8 +128,9 @@ entities come from.
 Priority is the **order you list the demand helpers** in the Coordinator. When
 directions conflict, the higher-priority room wins the unit: e.g. if the nursery
 needs heat while the master needs cooling, the unit heats for the nursery first;
-the master waits until the nursery is satisfied (or the changeover timer lets it
-switch).
+the master waits until the nursery is satisfied. A lower-priority room never
+overrides priority — only the short compressor reversal cooldown can briefly
+delay the switch.
 
 ---
 
@@ -187,13 +191,16 @@ Full step-by-step field values and a verification checklist are in
 - **Priority arbitration** — a single air handler is time-shared by room
   priority; the most important room is served first.
 - **Enable/disable per room** — flip a toggle to drop a room out of the system.
-- **Anti-short-cycle** — a minimum heat↔cool changeover protects the compressor.
+- **Compressor reversal cooldown** — a short (default 3 min) heat↔cool changeover
+  delay protects the compressor without ever overriding room priority.
 - **Setpoint force-run** — pushes the central thermostat's target past the
   hallway temperature so the unit actually runs for a room that needs it, with a
   manual override (hard toggle, or a grace period after a hand edit).
-- **Sleep mode** — the master bedroom drops to a colder target at night.
+- **Sleep / pre-cool** — the master bedroom drops to a colder target at night,
+  via a manual Sleep toggle or automatically during a scheduled evening window.
 - **Scheduled activation** — a room can pre-cool on a daily window when the
-  house is occupied (the master bedroom starts around 8pm for a cold bed).
+  house is occupied; the window itself applies the colder night setpoint, so the
+  master bedroom actively cools toward 68 °F from around 8pm for a cold bed.
 - **Home/away + proximity** — conditioning is reduced when the house is empty,
   resuming when someone comes within ~5 mi.
 - **Pressure relief** — the theater damper opens automatically so the duct is
