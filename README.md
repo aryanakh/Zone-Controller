@@ -1,7 +1,5 @@
 # DIY Smart Zone Controller for Ducted Air Conditioning
 
-![Zone Controller](images/zone-controller.png)
-
 Per-room climate zoning for a ducted HVAC system, running **entirely locally** on
 Home Assistant — no cloud. Motorized dampers open and close each room's duct
 branch based on that room's own temperature, occupancy, and priority, giving one
@@ -15,12 +13,19 @@ It uses an ESP32-based KinCony KC868 relay board to drive 24V AC dampers
 
 ---
 
-## 📖 Full build & explanation
+## Credit & what's different here
 
-For the hardware build, the wiring, and the story behind the project:
+This project is **based on and inspired by [The Stockpot](https://youtu.be/u8PV-tD-EuY)'s**
+ducted zoning build — 👉 *[watch his video here](https://youtu.be/u8PV-tD-EuY)*
+for the hardware, the wiring, and the story behind the original idea.
 
-👉 *[Watch the video here](https://youtu.be/u8PV-tD-EuY)*
-👉 *[Read the full write-up here](https://www.thestockpot.net/videos/zone-controller)*
+I took that idea and **rebuilt it for my own house.** All of the control logic
+in this repo — priority arbitration between rooms, the true two-sided hysteresis
+deadband, sleep/pre-cool scheduling, home/away with proximity, and the
+pressure-relief handling — is **my own work, implemented entirely in Home
+Assistant blueprints rather than in ESPHome.** The ESP board only flips relays;
+every decision lives in Home Assistant, which is what let me tailor the behaviour
+(room priorities, per-room setpoints, and scheduling) to my own use case.
 
 ---
 
@@ -212,8 +217,9 @@ Full step-by-step field values and a verification checklist are in
 
 ## 💬 Got questions?
 
-Open an issue here or leave a comment on the
-[YouTube video](https://www.youtube.com/@TheStockPot-AU). I'll do my best to help.
+For anything about **this** build (the Home Assistant blueprints and control
+logic), open an issue here and I'll do my best to help. For the original hardware
+build, see [The Stockpot's channel](https://www.youtube.com/@TheStockPot-AU).
 
 ## License
 
