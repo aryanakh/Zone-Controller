@@ -62,6 +62,8 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`
 - `input_boolean.zc_sleep_mode`, `input_boolean.zc_home_occupied`
 - `input_datetime.zc_last_changeover`
+- Setpoint force-run: `input_boolean.zc_setpoint_manual`,
+  `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
 - `zone.home_wide` (~5 mi)
 
 ## 2. Import the blueprints
@@ -139,9 +141,35 @@ Create **one** automation from the **Coordinator** blueprint:
   stays cooled while the house is empty)*
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
+- **Setpoint Force-Run** (optional but recommended — see below):
+  - Manage the unit's setpoint: **on**
+  - Force-run offset: **2** · Setpoint floor: **60** · Setpoint ceiling: **85**
+  - Manual setpoint override toggle: `input_boolean.zc_setpoint_manual`
+  - Manual-edit grace: **30** (minutes)
+  - Last-commanded setpoint helper: `input_number.zc_last_cmd_setpoint`
+  - Manual-grace-until helper: `input_datetime.zc_manual_until`
 
 > Choose **Turn the unit off** for the away action only if you have no room that
 > must be conditioned regardless of occupancy — it stops the server room too.
+
+### Why Setpoint Force-Run?
+
+The central thermostat senses the **hallway**. If the hallway is 67 °F, a room
+wants cooling at 71 °F, and the thermostat's setpoint is still 72 °F, the unit
+**won't start** — the hallway is already "cool enough" as far as the thermostat
+is concerned. With force-run enabled, whenever a room wins the arbitration the
+coordinator pushes the unit's target a couple of degrees past the sensed hallway
+temperature (e.g. cool → 65 °F) so it actually runs; the room dampers then do the
+real regulation and the coordinator turns the unit off once every room is
+satisfied. The target is clamped between the floor and ceiling.
+
+**Keeping manual control.** Two ways to override:
+- **Hard:** turn `input_boolean.zc_setpoint_manual` **on** — the coordinator
+  never touches the setpoint until you turn it back off.
+- **Soft:** just change the setpoint by hand (toggle off). The coordinator
+  detects the manual edit and leaves it alone for the grace period (default 30
+  min) before resuming force-run. So a manual tweak is never overridden
+  immediately.
 
 ## 5. Verify
 
@@ -169,6 +197,14 @@ Create **one** automation from the **Coordinator** blueprint:
    the 68 °F sleep cool setpoint.
 8. **Away.** Turn off `input_boolean.zc_home_occupied` with nobody in
    `zone.home_wide`; the configured away action fires (eco preset by default).
+9. **Force-run.** With force-run enabled, set the central thermostat to a mild
+   value (e.g. 72) while a room calls for cooling and the hallway is cooler than
+   that. The coordinator should drive the target down (≈ sensed − 2) so the unit
+   runs, and `input_number.zc_last_cmd_setpoint` updates to that value.
+10. **Manual respect.** Change the setpoint by hand: it should stick for the
+    grace period (`input_datetime.zc_manual_until` set into the future) rather
+    than being corrected on the next cycle. Turning
+    `input_boolean.zc_setpoint_manual` on holds it indefinitely.
 
 ### Template sanity check
 

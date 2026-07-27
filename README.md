@@ -89,6 +89,10 @@ Runs once for the whole house. It:
 - enforces an **anti-short-cycle** minimum changeover time before flipping
   heat↔cool (unless nothing is still calling in the current direction);
 - turns the unit **off** when no room is calling, and back on when one is;
+- optionally **force-runs the setpoint** — pushing the central thermostat's
+  target past the hallway temperature so the unit runs for a room that needs it,
+  while respecting manual setpoint changes (a hard override toggle, or a grace
+  period after you edit it by hand);
 - drives the **theater damper as a pressure-relief valve** — open only when every
   other damper is closed, so the always-open hallway plus the relief path keep the
   duct from over-pressurizing;
@@ -184,6 +188,9 @@ Full step-by-step field values and a verification checklist are in
   priority; the most important room is served first.
 - **Enable/disable per room** — flip a toggle to drop a room out of the system.
 - **Anti-short-cycle** — a minimum heat↔cool changeover protects the compressor.
+- **Setpoint force-run** — pushes the central thermostat's target past the
+  hallway temperature so the unit actually runs for a room that needs it, with a
+  manual override (hard toggle, or a grace period after a hand edit).
 - **Sleep mode** — the master bedroom drops to a colder target at night.
 - **Scheduled activation** — a room can pre-cool on a daily window when the
   house is occupied (the master bedroom starts around 8pm for a cold bed).

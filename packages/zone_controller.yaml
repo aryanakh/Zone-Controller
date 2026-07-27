@@ -82,6 +82,15 @@ input_number:
     icon: mdi:bed-clock
     initial: 68
 
+  # Bookkeeping for the coordinator's setpoint force-run (last value it wrote).
+  zc_last_cmd_setpoint:
+    name: Last commanded HVAC setpoint
+    min: 40
+    max: 95
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:thermostat
+
 input_boolean:
   # Per-room enable/disable. Off = room publishes no demand, damper closed.
   nursery_enabled:
@@ -103,6 +112,11 @@ input_boolean:
   zc_home_occupied:
     name: Home occupied
     icon: mdi:home-account
+
+  # Manual setpoint override for the coordinator's force-run feature.
+  zc_setpoint_manual:
+    name: HVAC setpoint manual override
+    icon: mdi:hand-back-right
 
 # Per-room raw demand (heat / cool / none), written by the Room Zone blueprint
 # and read by the Coordinator in priority order.
@@ -129,6 +143,13 @@ input_datetime:
     has_date: true
     has_time: true
     icon: mdi:swap-horizontal
+
+  # When the setpoint manual-edit grace period ends (force-run feature).
+  zc_manual_until:
+    name: HVAC setpoint manual grace until
+    has_date: true
+    has_time: true
+    icon: mdi:timer-sand
 
 # A wide (~5 mi) zone. Anyone inside it counts as home/approaching.
 # 5 miles ~= 8047 meters.  # TODO: set latitude/longitude to your home.

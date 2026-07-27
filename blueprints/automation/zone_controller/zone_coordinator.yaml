@@ -148,6 +148,99 @@ blueprint:
           selector:
             text:
 
+    setpoint_section:
+      name: Setpoint Force-Run (optional)
+      icon: mdi:thermostat
+      collapsed: true
+      input:
+        manage_setpoint:
+          name: Manage the unit's setpoint
+          description: >
+            The central thermostat senses the hallway, so a mild setpoint plus a
+            cold/warm hallway can stop the unit from running even when a room
+            needs air. When enabled, the coordinator pushes the unit's target a
+            few degrees past the sensed (hallway) temperature so it actually runs
+            in the winning direction. Leave off to only control the mode.
+          default: false
+          selector:
+            boolean:
+        run_offset:
+          name: Force-run offset (°)
+          description: >
+            How far past the sensed temperature to drive the target. Cooling
+            target = sensed - offset; heating target = sensed + offset.
+          default: 2
+          selector:
+            number:
+              min: 1
+              max: 8
+              step: 0.5
+              unit_of_measurement: "°"
+              mode: box
+        setpoint_floor:
+          name: Setpoint floor (°)
+          description: The lowest target the coordinator will command (clamp).
+          default: 60
+          selector:
+            number:
+              min: 40
+              max: 75
+              step: 1
+              unit_of_measurement: "°"
+              mode: box
+        setpoint_ceiling:
+          name: Setpoint ceiling (°)
+          description: The highest target the coordinator will command (clamp).
+          default: 85
+          selector:
+            number:
+              min: 75
+              max: 95
+              step: 1
+              unit_of_measurement: "°"
+              mode: box
+        setpoint_manual:
+          name: Manual setpoint override toggle (optional)
+          description: >
+            An input_boolean. While on, the coordinator never touches the
+            setpoint - you have full manual control. Turn it off to hand control
+            back to the coordinator.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        manual_grace:
+          name: Manual-edit grace (minutes)
+          description: >
+            If you change the setpoint by hand (with the manual toggle off), the
+            coordinator notices and leaves it alone for this many minutes before
+            resuming automatic force-run. Requires the two helpers below.
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 5
+              unit_of_measurement: min
+              mode: box
+        last_cmd_setpoint:
+          name: Last-commanded setpoint helper (input_number, optional)
+          description: Bookkeeping - stores the last target the coordinator set, so it can detect manual edits.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_number
+        manual_until:
+          name: Manual-grace-until helper (input_datetime, optional)
+          description: Bookkeeping - stores when the manual-edit grace period ends.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+
 mode: restart
 max_exceeded: silent
 
@@ -163,6 +256,14 @@ variables:
   away_action: !input away_action
   away_preset: !input away_preset
   home_preset: !input home_preset
+  manage_setpoint: !input manage_setpoint
+  run_offset: !input run_offset
+  setpoint_floor: !input setpoint_floor
+  setpoint_ceiling: !input setpoint_ceiling
+  setpoint_manual: !input setpoint_manual
+  manual_grace: !input manual_grace
+  last_cmd_setpoint: !input last_cmd_setpoint
+  manual_until: !input manual_until
   # --- presence ---
   home_toggle: "{{ is_state(home_occupied, 'on') }}"
   anyone_near: >
@@ -195,6 +296,36 @@ variables:
   # --- relief ---
   all_others_closed: "{{ zone_dampers | reject('is_state', 'off') | list | count == (zone_dampers | count) }}"
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
+  # --- setpoint force-run ---
+  unit_should_run: >
+    {{ winner_dir in ['heat', 'cool']
+       and not (not home and away_action == 'turn_off') }}
+  sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
+  sensed_valid: "{{ is_number(sensed_raw) }}"
+  sensed: "{{ sensed_raw | float(0) }}"
+  cur_sp_raw: "{{ state_attr(main_climate, 'temperature') }}"
+  cur_sp_valid: "{{ is_number(cur_sp_raw) }}"
+  cur_sp: "{{ cur_sp_raw | float(0) }}"
+  # Desired forcing target: push a few degrees past the sensed temperature so the
+  # unit runs, clamped to the floor/ceiling.
+  desired_sp: >
+    {{ [[ (sensed - run_offset) if winner_dir == 'cool' else (sensed + run_offset),
+          setpoint_floor ] | max, setpoint_ceiling ] | min }}
+  manual_hard: "{{ setpoint_manual is string and is_state(setpoint_manual, 'on') }}"
+  has_bookkeeping: "{{ last_cmd_setpoint is string and manual_until is string }}"
+  last_cmd_valid: "{{ has_bookkeeping and is_number(states(last_cmd_setpoint)) }}"
+  manual_edit_detected: >
+    {{ last_cmd_valid and cur_sp_valid
+       and (cur_sp - (states(last_cmd_setpoint) | float(0))) | abs > 0.2 }}
+  grace_active: >
+    {{ has_bookkeeping
+       and states(manual_until) not in ['unknown', 'unavailable', '']
+       and as_timestamp(states(manual_until), 0) > as_timestamp(now()) }}
+  # Manage the setpoint only when the unit should run, the feature is on, we are
+  # not in hard manual mode, and no valid temps are missing.
+  manage_now: >
+    {{ manage_setpoint and unit_should_run and not manual_hard
+       and sensed_valid }}
 
 trigger:
   - platform: state
@@ -309,4 +440,56 @@ action:
               timestamp: "{{ as_timestamp(now()) }}"
     # else: winner_dir == main_dir (already correct), or a flip is needed but
     # still locked out - hold the current direction.
+    default: []
+
+  # --- 4. Setpoint force-run (optional) --------------------------------------
+  # Make sure the central thermostat's target is aggressive enough (relative to
+  # the hallway it senses) that the unit actually runs in the winning direction.
+  - choose:
+      # Feature off, hard manual mode, or unit shouldn't run -> do nothing.
+      - conditions:
+          - condition: template
+            value_template: "{{ not manage_now }}"
+        sequence: []
+      # A manual edit was just detected -> respect it: start the grace window and
+      # adopt the manual value as the new baseline. Don't change the setpoint.
+      - conditions:
+          - condition: template
+            value_template: "{{ manual_edit_detected and has_bookkeeping }}"
+        sequence:
+          - service: input_datetime.set_datetime
+            target:
+              entity_id: !input manual_until
+            data:
+              timestamp: "{{ as_timestamp(now()) + (manual_grace | float(0)) * 60 }}"
+          - service: input_number.set_value
+            target:
+              entity_id: !input last_cmd_setpoint
+            data:
+              value: "{{ cur_sp }}"
+      # Inside the manual grace window -> leave the setpoint alone.
+      - conditions:
+          - condition: template
+            value_template: "{{ grace_active }}"
+        sequence: []
+      # Manage: if the current target isn't already the forcing value, set it.
+      - conditions:
+          - condition: template
+            value_template: "{{ (not cur_sp_valid) or ((cur_sp - desired_sp) | abs > 0.5) }}"
+        sequence:
+          - service: climate.set_temperature
+            target:
+              entity_id: !input main_climate
+            data:
+              temperature: "{{ desired_sp }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ has_bookkeeping }}"
+                sequence:
+                  - service: input_number.set_value
+                    target:
+                      entity_id: !input last_cmd_setpoint
+                    data:
+                      value: "{{ desired_sp }}"
     default: []
