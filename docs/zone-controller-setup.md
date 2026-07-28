@@ -161,13 +161,18 @@ Create **one** automation from the **Coordinator** blueprint:
   stays cooled while the house is empty)*
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
-- **Hallway High-Temp Cap:**
-  - Enable hallway high-temp cap: **on**
-  - Hallway max temperature: **76** — if no room is calling but the unit's sensed
-    (hallway) temperature rises above this, the coordinator forces cooling so the
-    common areas never drift too hot. It releases ~0.5° below the cap. A room's
-    own demand always takes priority, and it never forces heat. Needs Setpoint
-    Force-Run (below) on for the unit to actually run.
+- **Idle Behavior** (what to do when no room is calling):
+  - Idle behavior: **Hold a heat_cool safety band** — keeps the unit in
+    `heat_cool` on the band below, so the whole house stays between the limits
+    (a high *and* low backstop). Requires a unit that supports a `heat_cool` /
+    auto range mode. The other options are **Turn the unit off** (original) and
+    **Off, but force cooling above the high limit** (cooling-only cap).
+  - High limit / band high: **76** — the `heat_cool` cool target (or, in cap
+    mode, the temperature above which cooling is forced).
+  - Band low: **64** — the `heat_cool` heat target (band mode only).
+  - A room's own demand always takes priority over the idle backstop. The band
+    uses the unit's native dual-setpoint control, so it runs even without
+    Setpoint Force-Run; the cap mode needs Force-Run on to actually run.
 
 > ⚠️ **Vacation turns the whole unit off**, which also stops the always-on
 > server room. If the server room must keep cooling while you travel, use
@@ -233,10 +238,11 @@ satisfied. The target is clamped between the floor and ceiling.
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
    `zone.home_wide`; the configured away action fires (eco preset by default).
-9. **Hallway cap.** With every room satisfied (nobody calling) but the unit's
-   sensed hallway temperature above 76, the coordinator should force cooling
-   (`want=cool … START-cool [cap]` in the status line) and shut off again once
-   the hallway falls ~0.5° below the cap.
+9. **Idle band.** With every room satisfied (nobody calling) and idle behavior
+   set to **hold band**, the unit should sit in `heat_cool` on the 64–76 band
+   (`BAND 64-76` in the status line) — cooling if the house exceeds 76, heating
+   below 64, otherwise coasting. (In **cap** mode instead, it stays off until the
+   hallway passes 76, then shows `START-cool [cap]`.)
 10. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
    unit switches to the eco preset but keeps running. Set it to **Vacation** →
    the unit turns off entirely (server room included). Set it back to **Home** →
@@ -280,10 +286,12 @@ writes one line per run describing exactly what it decided. Format:
   - `FLIP-heat` / `FLIP-cool` — reversed direction for a higher-priority room.
   - `HOLD-cool(cooldown 1/3m)` — a flip is wanted but the compressor cooldown is
     blocking it (1 of 3 min elapsed); holds the current direction.
-  - `OFF(no-demand)` — no room is calling, so it shut the unit off.
+  - `OFF(no-demand)` — no room is calling, so it shut the unit off (idle = off).
+  - `BAND 64-76` — no room is calling and idle behavior is **hold band**, so the
+    unit is held in `heat_cool` between those limits.
   - `OFF` — forced off (house mode Vacation, or away with the turn-off action).
-  - A `[cap]` tag after the action (e.g. `START-cool [cap]`) means the **hallway
-    high-temp cap** is what's driving cooling, not any individual room.
+  - A `[cap]` tag after the action (e.g. `START-cool [cap]`) means the idle
+    **high-temp cap** is what's driving cooling, not any individual room.
 - **mode** — `home`, `away`, `presence-away(eco)`, `away(eco)` (house mode Away),
   or `vacation`.
 - **setpoint** (only when force-run is enabled) — `sp->71` (pushed the target to
