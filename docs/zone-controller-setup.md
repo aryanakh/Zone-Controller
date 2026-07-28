@@ -144,12 +144,35 @@ Create **one** automation from the **Coordinator** blueprint:
 - Relief valve damper switch: `switch.damper_theater`
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
+- Status / decision output *(optional but recommended)*: `input_text.zc_status`
+  — the coordinator writes a one-line summary of every decision here, e.g.
+  `10:15:03 want=cool have=off | START-cool | home sp->71`. Add it to a dashboard
+  (or just watch it in Developer Tools → States) to see exactly what the
+  coordinator did and why on each run. See **Reading the status line** below.
+- House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
+  reads **Away** the unit is forced into the eco preset (Eco mode); when it reads
+  **Vacation** the unit is turned off. Any other value falls back to the
+  presence logic below.
+  - House mode "Away" value: **Away** · House mode "Vacation" value: **Vacation**
+    *(match your selector's exact option labels)*
 - Home occupied toggle: `input_boolean.<your_home_occupied>`
 - Wide presence zone: `zone.home_wide`
 - Away action: **Set eco preset** *(keeps the unit running so the server room
   stays cooled while the house is empty)*
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
+- **Hallway High-Temp Cap:**
+  - Enable hallway high-temp cap: **on**
+  - Hallway max temperature: **76** — if no room is calling but the unit's sensed
+    (hallway) temperature rises above this, the coordinator forces cooling so the
+    common areas never drift too hot. It releases ~0.5° below the cap. A room's
+    own demand always takes priority, and it never forces heat. Needs Setpoint
+    Force-Run (below) on for the unit to actually run.
+
+> ⚠️ **Vacation turns the whole unit off**, which also stops the always-on
+> server room. If the server room must keep cooling while you travel, use
+> **Away** instead of Vacation. A house-mode change is applied on the next
+> safety re-sync (within ~2 min), not instantly.
 - **Setpoint Force-Run** (optional but recommended — see below):
   - Manage the unit's setpoint: **on**
   - Force-run offset: **2** · Setpoint floor: **60** · Setpoint ceiling: **85**
@@ -210,6 +233,14 @@ satisfied. The target is clamped between the floor and ceiling.
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
    `zone.home_wide`; the configured away action fires (eco preset by default).
+9. **Hallway cap.** With every room satisfied (nobody calling) but the unit's
+   sensed hallway temperature above 76, the coordinator should force cooling
+   (`want=cool … START-cool [cap]` in the status line) and shut off again once
+   the hallway falls ~0.5° below the cap.
+10. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
+   unit switches to the eco preset but keeps running. Set it to **Vacation** →
+   the unit turns off entirely (server room included). Set it back to **Home** →
+   the eco preset is restored and normal operation resumes.
 9. **Force-run.** With force-run enabled, set the central thermostat to a mild
    value (e.g. 72) while a room calls for cooling and the hallway is cooler than
    that. The coordinator should drive the target down (≈ sensed − 2) so the unit
@@ -230,6 +261,48 @@ confirm the coordinator's core expressions:
 winner_dir:        {% set ns = namespace(dir='none') %}{% for d in zone_demands %}{% if ns.dir=='none' and states(d) in ['heat','cool'] %}{% set ns.dir=states(d) %}{% endif %}{% endfor %}{{ ns.dir }}
 all_others_closed: {{ zone_dampers | reject('is_state','off') | list | count == (zone_dampers | count) }}
 ```
+
+### Reading the status line
+
+If you wired up the optional `input_text.zc_status` helper, the coordinator
+writes one line per run describing exactly what it decided. Format:
+
+```
+<time> want=<dir> have=<dir> | <action> | <mode>[ <setpoint>]
+```
+
+- **want=** — the direction the winning (highest-priority calling) room asked for
+  (`heat` / `cool` / `none`).
+- **have=** — the direction the unit is currently in (`heat` / `cool` / `off`).
+- **action** — what the coordinator did to the unit this run:
+  - `START-cool` / `START-heat` — unit was off and a room called, so it started it.
+  - `RUN-cool` / `RUN-heat` — already running the right direction, left it.
+  - `FLIP-heat` / `FLIP-cool` — reversed direction for a higher-priority room.
+  - `HOLD-cool(cooldown 1/3m)` — a flip is wanted but the compressor cooldown is
+    blocking it (1 of 3 min elapsed); holds the current direction.
+  - `OFF(no-demand)` — no room is calling, so it shut the unit off.
+  - `OFF` — forced off (house mode Vacation, or away with the turn-off action).
+  - A `[cap]` tag after the action (e.g. `START-cool [cap]`) means the **hallway
+    high-temp cap** is what's driving cooling, not any individual room.
+- **mode** — `home`, `away`, `presence-away(eco)`, `away(eco)` (house mode Away),
+  or `vacation`.
+- **setpoint** (only when force-run is enabled) — `sp->71` (pushed the target to
+  71), `sp-ok` (already correct), `sp-manual` (respecting the hard override), or
+  `sp-grace` (inside the manual-edit grace window).
+
+Examples:
+
+```
+10:15:03 want=cool have=off  | START-cool          | home sp->71
+10:41:12 want=none have=cool | OFF(no-demand)       | home
+11:02:55 want=heat have=cool | HOLD-cool(cooldown 1/3m) | home
+18:30:00 want=none have=off  | OFF                  | vacation
+```
+
+If the status line **never updates**, the coordinator automation itself isn't
+running — check that it's enabled and look at its trace. If it updates but shows
+`want=none` while a room is hot, the room isn't publishing demand (see the
+troubleshooting flow: check that room's demand `input_text` and temp sensor).
 
 ## Notes & limitations
 

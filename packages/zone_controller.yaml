@@ -41,6 +41,8 @@
 #   - Your existing toggles (this package does NOT create these):
 #       input_boolean.<your_sleep_mode>       (master sleep / pre-cool override)
 #       input_boolean.<your_home_occupied>    (home/away toggle)
+#       input_select.<your_house_mode>        (optional: Home / Away / Vacation -
+#                                              Away => eco preset, Vacation => off)
 # =============================================================================
 
 input_number:
@@ -137,6 +139,12 @@ input_text:
     name: Server room demand
     initial: none
     icon: mdi:server
+
+  # Coordinator writes a one-line summary of each decision here (diagnostic).
+  zc_status:
+    name: Zone controller status
+    max: 255
+    icon: mdi:message-text-outline
 
 # Remembers when the unit last changed direction (compressor anti-short-cycle).
 input_datetime:

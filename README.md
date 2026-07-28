@@ -105,12 +105,17 @@ Runs once for the whole house. It:
   other damper is closed, so the always-open hallway plus the relief path keep the
   duct from over-pressurizing;
 - handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone), defaulting
-  to an eco preset so an always-on room keeps running while the house is empty.
+  to an eco preset so an always-on room keeps running while the house is empty;
+- honours an optional **house-mode selector** — `Away` forces the eco preset,
+  `Vacation` turns the unit off;
+- enforces a **hallway high-temp cap** — forces cooling when the sensed hallway
+  temperature exceeds the cap (default 76 °F) even if no room is calling.
 
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints (`input_number`), per-room
-enable toggles (`input_boolean`), per-room demand helpers (`input_text`), the
-changeover timestamp (`input_datetime`), and the wide presence `zone`. It does
+enable toggles (`input_boolean`), per-room demand helpers plus the coordinator
+status line (`input_text`), the changeover timestamp (`input_datetime`), and the
+wide presence `zone`. It does
 **not** create the sleep-mode or home-occupied booleans — point the blueprints at
 your existing ones.
 
@@ -209,6 +214,14 @@ Full step-by-step field values and a verification checklist are in
   master bedroom actively cools toward 68 °F from around 8pm for a cold bed.
 - **Home/away + proximity** — conditioning is reduced when the house is empty,
   resuming when someone comes within ~5 mi.
+- **House mode selector** — an optional `input_select` overrides home/away:
+  **Away** forces the eco preset (Eco mode), **Vacation** turns the unit off.
+- **Hallway high-temp cap** — a whole-house cooling backstop: if no room is
+  calling but the hallway the unit senses climbs above the cap (default 76 °F),
+  it forces cooling so common areas never drift too hot.
+- **Status output** — the coordinator writes a one-line summary of every decision
+  to an optional `input_text` (e.g. `want=cool have=off | START-cool | home
+  sp->71`), so you can see at a glance what it did and why.
 - **Pressure relief** — the theater damper opens automatically so the duct is
   never over-pressurized.
 - **Fail-open** — normally-open dampers spring open on power loss.

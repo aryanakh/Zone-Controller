@@ -25,7 +25,14 @@ blueprint:
          (always open) plus the relief path keep the duct from over-pressurizing.
 
       4. Home / away - when nobody is home (a toggle is off AND nobody is inside a
-         wide ~5 mi presence zone) it reduces conditioning.
+         wide ~5 mi presence zone) it reduces conditioning. An optional house-mode
+         input_select overrides this: "Away" forces the eco preset (Eco mode) and
+         "Vacation" turns the unit off entirely.
+
+      5. Hallway high-temp cap - a whole-house cooling backstop. If no room is
+         calling but the unit's sensed (hallway) temperature climbs above the cap
+         (default 76), it forces cooling anyway so common areas never drift too
+         hot, releasing ~0.5 below the cap. A room's demand always takes priority.
 
     Damper polarity is INVERTED (normally-open): off = OPEN, on = CLOSED.
 
@@ -35,7 +42,10 @@ blueprint:
     Away note: the default away action sets an eco preset rather than turning the
     unit off, so an always-on room (e.g. a server room) keeps cooling while the
     house is empty. Choose "Turn off" only if no room must run regardless of
-    occupancy.
+    occupancy. NOTE: the house-mode "Vacation" value turns the whole unit off,
+    which also stops any always-on room (e.g. the server room) - use "Away" if
+    the server room must keep cooling while you travel. A house-mode change is
+    picked up on the next safety re-sync (within ~2 min).
   domain: automation
   source_url: https://github.com/aryanakh/zone-controller/blob/main/blueprints/automation/zone_controller/zone_coordinator.yaml
   input:
@@ -106,12 +116,49 @@ blueprint:
             entity:
               filter:
                 - domain: input_datetime
+        status_helper:
+          name: Status / decision output (input_text, optional)
+          description: >
+            Optional input_text the coordinator writes a one-line summary of each
+            decision to (e.g. "10:15:03 want=cool have=off | START-cool | home").
+            Purely diagnostic - watch it to see what the coordinator did and why.
+            Create the helper with max length 255 so long lines aren't truncated.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_text
 
     presence_section:
       name: Home / Away
       icon: mdi:home-account
       collapsed: false
       input:
+        house_mode:
+          name: House mode selector (optional)
+          description: >
+            An optional input_select that overrides home/away. When it equals the
+            "Away" value below the unit is forced into the eco preset (Eco mode);
+            when it equals the "Vacation" value the unit is turned off entirely.
+            Any other value (e.g. Home) falls back to the presence logic below.
+            Leave unset to rely only on the toggle + presence zone.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+        house_mode_away:
+          name: House mode - "Away" value
+          description: The input_select option that means Away (forces the eco preset).
+          default: Away
+          selector:
+            text:
+        house_mode_vacation:
+          name: House mode - "Vacation" value
+          description: The input_select option that means Vacation (turns the unit off).
+          default: Vacation
+          selector:
+            text:
         home_occupied:
           name: Home occupied toggle
           description: An input_boolean that is on while the house should be treated as occupied.
@@ -154,6 +201,38 @@ blueprint:
           default: none
           selector:
             text:
+
+    comfort_section:
+      name: Hallway High-Temp Cap
+      icon: mdi:thermometer-alert
+      collapsed: false
+      input:
+        hallway_cap_enable:
+          name: Enable hallway high-temp cap
+          description: >
+            A whole-house comfort backstop. When on, if the unit's own sensed
+            (hallway) temperature climbs above the cap below, the coordinator
+            forces cooling even when no individual room is calling - so common
+            areas never drift too hot. It engages above the cap and releases
+            ~0.5 below it to avoid short-cycling. For the unit to actually run,
+            keep the Setpoint Force-Run feature on (below).
+          default: true
+          selector:
+            boolean:
+        hallway_max_temp:
+          name: Hallway max temperature (deg)
+          description: >
+            Force cooling when the sensed hallway temperature rises above this.
+            Only forces cooling - it never forces heat. Ignored while the unit is
+            forced off (house mode Vacation, or away with the turn-off action).
+          default: 76
+          selector:
+            number:
+              min: 68
+              max: 90
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
 
     setpoint_section:
       name: Setpoint Force-Run (optional)
@@ -258,11 +337,17 @@ variables:
   relief_damper: !input relief_damper
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
+  status_helper: !input status_helper
+  house_mode: !input house_mode
+  house_mode_away: !input house_mode_away
+  house_mode_vacation: !input house_mode_vacation
   home_occupied: !input home_occupied
   presence_zone: !input presence_zone
   away_action: !input away_action
   away_preset: !input away_preset
   home_preset: !input home_preset
+  hallway_cap_enable: !input hallway_cap_enable
+  hallway_max_temp: !input hallway_max_temp
   manage_setpoint: !input manage_setpoint
   run_offset: !input run_offset
   setpoint_floor: !input setpoint_floor
@@ -276,9 +361,21 @@ variables:
   anyone_near: >
     {{ presence_zone is string and (states(presence_zone) | int(0) > 0) }}
   home: "{{ home_toggle or anyone_near }}"
+  # --- house mode selector (optional 3-state override) ---
+  hm_state: "{{ states(house_mode) if house_mode is string else '' }}"
+  hm_away: "{{ house_mode is string and hm_state == house_mode_away }}"
+  hm_vacation: "{{ house_mode is string and hm_state == house_mode_vacation }}"
+  # Turn the whole unit off? Vacation, or presence-away with the turn_off action.
+  force_off: >
+    {{ hm_vacation or (not home and away_action == 'turn_off') }}
+  # Hold the unit in the eco preset (but keep it running)? Away mode, or
+  # presence-away with the eco action - unless we are turning the unit off.
+  want_eco: >
+    {{ not force_off
+       and (hm_away or (away_action == 'eco_preset' and not home)) }}
   # --- priority arbitration ---
   # First demand helper (in priority order) that is calling wins the direction.
-  winner_dir: >
+  room_dir: >
     {% set ns = namespace(dir='none') %}
     {% for d in zone_demands %}
       {% if ns.dir == 'none' and states(d) in ['heat', 'cool'] %}
@@ -288,6 +385,18 @@ variables:
     {{ ns.dir }}
   main_state: "{{ states(main_climate) }}"
   main_dir: "{{ main_state if main_state in ['heat', 'cool'] else 'off' }}"
+  # --- hallway high-temp cap (whole-house cooling backstop) ---
+  # The unit senses the hallway; if no room is calling but the hallway is over
+  # the cap, force cooling anyway. Engage above the cap, release ~0.5 below it
+  # (using the unit already cooling as memory) to avoid short-cycling.
+  cap_sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
+  cap_sensed: "{{ cap_sensed_raw | float(0) }}"
+  cap_active: >
+    {{ hallway_cap_enable and is_number(cap_sensed_raw) and room_dir == 'none'
+       and (cap_sensed > hallway_max_temp
+            or (main_dir == 'cool' and cap_sensed > hallway_max_temp - 0.5)) }}
+  # A room's demand wins; otherwise the hallway cap can force cooling.
+  winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
   # Is any room still calling in the direction the unit is currently running?
   current_dir_still_calling: >
     {{ main_dir in ['heat', 'cool']
@@ -305,8 +414,7 @@ variables:
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
   # --- setpoint force-run ---
   unit_should_run: >
-    {{ winner_dir in ['heat', 'cool']
-       and not (not home and away_action == 'turn_off') }}
+    {{ winner_dir in ['heat', 'cool'] and not force_off }}
   sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   sensed_valid: "{{ is_number(sensed_raw) }}"
   sensed: "{{ sensed_raw | float(0) }}"
@@ -333,6 +441,29 @@ variables:
   manage_now: >
     {{ manage_setpoint and unit_should_run and not manual_hard
        and sensed_valid }}
+  # --- status / decision summary (for the optional status_helper) ---
+  # What the unit-direction block (section 3) will do this run.
+  status_action: >-
+    {% if force_off %}OFF{% elif winner_dir == 'none' %}OFF(no-demand){% elif
+    main_dir == 'off' %}START-{{ winner_dir }}{% elif need_flip and allow_flip
+    %}FLIP-{{ winner_dir }}{% elif need_flip %}HOLD-{{ main_dir }}(cooldown {{
+    mins_since_change | round(0) }}/{{ min_changeover }}m){% else %}RUN-{{
+    main_dir }}{% endif %}
+  # Why we're in the away/eco/off state (or plain "home").
+  status_mode: >-
+    {% if hm_vacation %}vacation{% elif hm_away %}away(eco){% elif want_eco
+    %}presence-away(eco){% elif not home %}away{% else %}home{% endif %}
+  # What the setpoint force-run block (section 4) will do this run.
+  status_sp: >-
+    {% if manage_now and ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs >
+    0.5)) %} sp->{{ desired_sp }}{% elif manage_now %} sp-ok{% elif
+    manage_setpoint and manual_hard %} sp-manual{% elif manage_setpoint and
+    grace_active %} sp-grace{% endif %}
+  # Note when the hallway cap (not a room) is what's driving cooling.
+  status_cap: "{{ ' [cap]' if cap_active else '' }}"
+  status_msg: >-
+    {{ now().strftime('%H:%M:%S') }} want={{ winner_dir }} have={{ main_dir }}
+    | {{ status_action }}{{ status_cap }} | {{ status_mode }}{{ status_sp }}
 
 trigger:
   - platform: state
@@ -371,11 +502,12 @@ action:
         target:
           entity_id: !input relief_damper
 
-  # --- 2. Away: eco preset apply / restore -----------------------------------
+  # --- 2. Eco preset apply / restore -----------------------------------------
+  # Applies while House mode = Away, or presence-away with the eco action.
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ away_action == 'eco_preset' and not home and current_preset != away_preset }}"
+            value_template: "{{ want_eco and current_preset != away_preset }}"
         sequence:
           - service: climate.set_preset_mode
             target:
@@ -384,7 +516,7 @@ action:
               preset_mode: !input away_preset
       - conditions:
           - condition: template
-            value_template: "{{ away_action == 'eco_preset' and home and current_preset == away_preset }}"
+            value_template: "{{ not want_eco and not force_off and current_preset == away_preset }}"
         sequence:
           - service: climate.set_preset_mode
             target:
@@ -394,10 +526,11 @@ action:
 
   # --- 3. Unit direction / on / off ------------------------------------------
   - choose:
-      # Hard away-off (opt-in): stop the unit entirely while away.
+      # Forced off: House mode = Vacation, or presence-away with the turn_off
+      # action. Stops the entire unit (including any always-on room).
       - conditions:
           - condition: template
-            value_template: "{{ not home and away_action == 'turn_off' }}"
+            value_template: "{{ force_off }}"
         sequence:
           - condition: template
             value_template: "{{ main_state != 'off' }}"
@@ -500,3 +633,17 @@ action:
                     data:
                       value: "{{ desired_sp }}"
     default: []
+
+  # --- 5. Status / decision output (optional) --------------------------------
+  # Publish a one-line summary of what this run decided, for observability. The
+  # status variables are rendered at run start, so this reflects the decision.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ status_helper is string }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "{{ status_msg }}"
