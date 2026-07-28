@@ -1,5 +1,6 @@
 blueprint:
-  name: Zone Controller - Coordinator
+  name: AryaNakh's Zone Controller - Coordinator (v0.3)
+  author: AryaNakh
   description: >
     House-level coordinator for a ducted HVAC zoning system. Run ONE instance.
 
