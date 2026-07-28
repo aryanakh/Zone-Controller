@@ -30,10 +30,14 @@ blueprint:
          input_select overrides this: "Away" forces the eco preset (Eco mode) and
          "Vacation" turns the unit off entirely.
 
-      5. Hallway high-temp cap - a whole-house cooling backstop. If no room is
-         calling but the unit's sensed (hallway) temperature climbs above the cap
-         (default 76), it forces cooling anyway so common areas never drift too
-         hot, releasing ~0.5 below the cap. A room's demand always takes priority.
+      5. Idle behavior - what to do when NO room is calling. Choose one:
+         - Off: turn the unit off (original behavior).
+         - Off + high-temp cap: off, but force cooling if the sensed (hallway)
+           temperature climbs above the high limit (a cooling-only backstop).
+         - Hold heat_cool band: keep the unit in heat_cool on a low/high band
+           (default 64-76) so the whole house stays between them - a high AND low
+           whole-house backstop, using the unit's native dual-setpoint control.
+         A room's demand always takes priority over the idle backstop.
 
     Damper polarity is INVERTED (normally-open): off = OPEN, on = CLOSED.
 
@@ -204,33 +208,59 @@ blueprint:
             text:
 
     comfort_section:
-      name: Hallway High-Temp Cap
-      icon: mdi:thermometer-alert
+      name: Idle Behavior (no room calling)
+      icon: mdi:hvac-off
       collapsed: false
       input:
-        hallway_cap_enable:
-          name: Enable hallway high-temp cap
+        idle_mode:
+          name: Idle behavior
           description: >
-            A whole-house comfort backstop. When on, if the unit's own sensed
-            (hallway) temperature climbs above the cap below, the coordinator
-            forces cooling even when no individual room is calling - so common
-            areas never drift too hot. It engages above the cap and releases
-            ~0.5 below it to avoid short-cycling. For the unit to actually run,
-            keep the Setpoint Force-Run feature on (below).
-          default: true
+            What the coordinator does when NO room is calling for heat or cool.
+            - Turn the unit off: fully off (original behavior).
+            - Off + high-temp cap: off, but force cooling if the sensed (hallway)
+              temperature climbs above the high limit below (a cooling-only
+              backstop; needs Setpoint Force-Run on to actually run).
+            - Hold a heat_cool safety band: keep the unit in heat_cool holding the
+              low/high band below, so the whole house stays between them - a high
+              AND low backstop. Your unit must support a heat_cool / auto range
+              mode. This uses the unit's own dual-setpoint control (no force-run
+              needed while idling).
+          default: hold_band
           selector:
-            boolean:
-        hallway_max_temp:
-          name: Hallway max temperature (deg)
+            select:
+              options:
+                - label: Turn the unit off
+                  value: "off"
+                - label: Off, but force cooling above the high limit (cap)
+                  value: cap
+                - label: Hold a heat_cool safety band (high + low backstop)
+                  value: hold_band
+        idle_high:
+          name: High limit / band high (deg)
           description: >
-            Force cooling when the sensed hallway temperature rises above this.
-            Only forces cooling - it never forces heat. Ignored while the unit is
-            forced off (house mode Vacation, or away with the turn-off action).
+            Upper temperature. In "cap" mode: cooling is forced when the sensed
+            hallway rises above this (releasing ~0.5 below). In "band" mode: the
+            heat_cool cool target - the unit cools to keep the house below it.
+            Ignored when idle behavior is "Turn the unit off". Default 76.
           default: 76
           selector:
             number:
-              min: 68
+              min: 60
               max: 90
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
+        idle_low:
+          name: Band low (deg)
+          description: >
+            Lower temperature for "Hold a heat_cool safety band" mode only - the
+            heat_cool heat target the unit heats to keep the house above. Keep it
+            well below the high limit. Ignored in the other idle modes. Default 64.
+          default: 64
+          selector:
+            number:
+              min: 50
+              max: 78
               step: 0.5
               unit_of_measurement: deg
               mode: box
@@ -347,8 +377,9 @@ variables:
   away_action: !input away_action
   away_preset: !input away_preset
   home_preset: !input home_preset
-  hallway_cap_enable: !input hallway_cap_enable
-  hallway_max_temp: !input hallway_max_temp
+  idle_mode: !input idle_mode
+  idle_high: !input idle_high
+  idle_low: !input idle_low
   manage_setpoint: !input manage_setpoint
   run_offset: !input run_offset
   setpoint_floor: !input setpoint_floor
@@ -386,18 +417,27 @@ variables:
     {{ ns.dir }}
   main_state: "{{ states(main_climate) }}"
   main_dir: "{{ main_state if main_state in ['heat', 'cool'] else 'off' }}"
-  # --- hallway high-temp cap (whole-house cooling backstop) ---
-  # The unit senses the hallway; if no room is calling but the hallway is over
-  # the cap, force cooling anyway. Engage above the cap, release ~0.5 below it
-  # (using the unit already cooling as memory) to avoid short-cycling.
+  # --- idle behavior (what to do when no room is calling) ---
+  idle_hold: "{{ idle_mode == 'hold_band' }}"
+  cap_enabled: "{{ idle_mode == 'cap' }}"
+  # Hallway high-temp cap ("cap" mode only): the unit senses the hallway, so if
+  # no room is calling but the hallway is over the high limit, force cooling.
+  # Engage above it, release ~0.5 below (unit already cooling = memory).
   cap_sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   cap_sensed: "{{ cap_sensed_raw | float(0) }}"
   cap_active: >
-    {{ hallway_cap_enable and is_number(cap_sensed_raw) and room_dir == 'none'
-       and (cap_sensed > hallway_max_temp
-            or (main_dir == 'cool' and cap_sensed > hallway_max_temp - 0.5)) }}
-  # A room's demand wins; otherwise the hallway cap can force cooling.
+    {{ cap_enabled and is_number(cap_sensed_raw) and room_dir == 'none'
+       and (cap_sensed > idle_high
+            or (main_dir == 'cool' and cap_sensed > idle_high - 0.5)) }}
+  # A room's demand wins; otherwise the cap can force cooling (in "cap" mode).
   winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
+  # Is the unit already holding the idle heat_cool band (so we can skip re-commanding)?
+  main_ttl: "{{ state_attr(main_climate, 'target_temp_low') }}"
+  main_tth: "{{ state_attr(main_climate, 'target_temp_high') }}"
+  idle_band_set: >
+    {{ main_state == 'heat_cool' and is_number(main_ttl) and is_number(main_tth)
+       and (main_ttl | float(0) - idle_low) | abs < 0.5
+       and (main_tth | float(0) - idle_high) | abs < 0.5 }}
   # Is any room still calling in the direction the unit is currently running?
   current_dir_still_calling: >
     {{ main_dir in ['heat', 'cool']
@@ -445,11 +485,12 @@ variables:
   # --- status / decision summary (for the optional status_helper) ---
   # What the unit-direction block (section 3) will do this run.
   status_action: >-
-    {% if force_off %}OFF{% elif winner_dir == 'none' %}OFF(no-demand){% elif
-    main_dir == 'off' %}START-{{ winner_dir }}{% elif need_flip and allow_flip
-    %}FLIP-{{ winner_dir }}{% elif need_flip %}HOLD-{{ main_dir }}(cooldown {{
-    mins_since_change | round(0) }}/{{ min_changeover }}m){% else %}RUN-{{
-    main_dir }}{% endif %}
+    {% if force_off %}OFF{% elif winner_dir == 'none' and idle_hold %}BAND {{
+    idle_low }}-{{ idle_high }}{% elif winner_dir == 'none' %}OFF(no-demand){%
+    elif main_dir == 'off' %}START-{{ winner_dir }}{% elif need_flip and
+    allow_flip %}FLIP-{{ winner_dir }}{% elif need_flip %}HOLD-{{ main_dir
+    }}(cooldown {{ mins_since_change | round(0) }}/{{ min_changeover }}m){% else
+    %}RUN-{{ main_dir }}{% endif %}
   # Why we're in the away/eco/off state (or plain "home").
   status_mode: >-
     {% if hm_vacation %}vacation{% elif hm_away %}away(eco){% elif want_eco
@@ -538,16 +579,49 @@ action:
           - service: climate.turn_off
             target:
               entity_id: !input main_climate
-      # No room is calling -> switch the unit off.
+      # No room is calling -> idle behavior. Hold a heat_cool safety band, or
+      # (off / cap modes) switch the unit off.
       - conditions:
           - condition: template
             value_template: "{{ winner_dir == 'none' }}"
         sequence:
-          - condition: template
-            value_template: "{{ main_state != 'off' }}"
-          - service: climate.turn_off
-            target:
-              entity_id: !input main_climate
+          - choose:
+              # Hold-band mode: keep the unit in heat_cool on the low/high band so
+              # the whole house stays between them (high + low backstop).
+              - conditions:
+                  - condition: template
+                    value_template: "{{ idle_hold }}"
+                sequence:
+                  # Ensure the unit is in heat_cool mode.
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ main_state != 'heat_cool' }}"
+                        sequence:
+                          - service: climate.set_hvac_mode
+                            target:
+                              entity_id: !input main_climate
+                            data:
+                              hvac_mode: heat_cool
+                  # Apply the band if it isn't already set.
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not idle_band_set }}"
+                        sequence:
+                          - service: climate.set_temperature
+                            target:
+                              entity_id: !input main_climate
+                            data:
+                              target_temp_low: "{{ idle_low }}"
+                              target_temp_high: "{{ idle_high }}"
+            # Off / cap modes with nothing calling -> switch the unit off.
+            default:
+              - condition: template
+                value_template: "{{ main_state != 'off' }}"
+              - service: climate.turn_off
+                target:
+                  entity_id: !input main_climate
       # Unit is off and a room is calling -> start it in the winning direction.
       - conditions:
           - condition: template
