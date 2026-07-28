@@ -1,5 +1,6 @@
 blueprint:
-  name: Zone Controller - Room Zone
+  name: AryaNakh's Zone Controller - Room Zone (v0.3)
+  author: AryaNakh
   description: >
     Per-room damper control for a ducted HVAC zoning system. Instantiate once per
     conditioned room (nursery, master bedroom, server room). The theater / bonus
