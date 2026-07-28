@@ -107,7 +107,9 @@ Runs once for the whole house. It:
 - handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone), defaulting
   to an eco preset so an always-on room keeps running while the house is empty;
 - honours an optional **house-mode selector** — `Away` forces the eco preset,
-  `Vacation` turns the unit off.
+  `Vacation` turns the unit off;
+- enforces a **hallway high-temp cap** — forces cooling when the sensed hallway
+  temperature exceeds the cap (default 76 °F) even if no room is calling.
 
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints (`input_number`), per-room
@@ -214,6 +216,9 @@ Full step-by-step field values and a verification checklist are in
   resuming when someone comes within ~5 mi.
 - **House mode selector** — an optional `input_select` overrides home/away:
   **Away** forces the eco preset (Eco mode), **Vacation** turns the unit off.
+- **Hallway high-temp cap** — a whole-house cooling backstop: if no room is
+  calling but the hallway the unit senses climbs above the cap (default 76 °F),
+  it forces cooling so common areas never drift too hot.
 - **Status output** — the coordinator writes a one-line summary of every decision
   to an optional `input_text` (e.g. `want=cool have=off | START-cool | home
   sp->71`), so you can see at a glance what it did and why.

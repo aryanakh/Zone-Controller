@@ -161,6 +161,13 @@ Create **one** automation from the **Coordinator** blueprint:
   stays cooled while the house is empty)*
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
+- **Hallway High-Temp Cap:**
+  - Enable hallway high-temp cap: **on**
+  - Hallway max temperature: **76** — if no room is calling but the unit's sensed
+    (hallway) temperature rises above this, the coordinator forces cooling so the
+    common areas never drift too hot. It releases ~0.5° below the cap. A room's
+    own demand always takes priority, and it never forces heat. Needs Setpoint
+    Force-Run (below) on for the unit to actually run.
 
 > ⚠️ **Vacation turns the whole unit off**, which also stops the always-on
 > server room. If the server room must keep cooling while you travel, use
@@ -226,7 +233,11 @@ satisfied. The target is clamped between the floor and ceiling.
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
    `zone.home_wide`; the configured away action fires (eco preset by default).
-9. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
+9. **Hallway cap.** With every room satisfied (nobody calling) but the unit's
+   sensed hallway temperature above 76, the coordinator should force cooling
+   (`want=cool … START-cool [cap]` in the status line) and shut off again once
+   the hallway falls ~0.5° below the cap.
+10. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
    unit switches to the eco preset but keeps running. Set it to **Vacation** →
    the unit turns off entirely (server room included). Set it back to **Home** →
    the eco preset is restored and normal operation resumes.
@@ -271,6 +282,8 @@ writes one line per run describing exactly what it decided. Format:
     blocking it (1 of 3 min elapsed); holds the current direction.
   - `OFF(no-demand)` — no room is calling, so it shut the unit off.
   - `OFF` — forced off (house mode Vacation, or away with the turn-off action).
+  - A `[cap]` tag after the action (e.g. `START-cool [cap]`) means the **hallway
+    high-temp cap** is what's driving cooling, not any individual room.
 - **mode** — `home`, `away`, `presence-away(eco)`, `away(eco)` (house mode Away),
   or `vacation`.
 - **setpoint** (only when force-run is enabled) — `sp->71` (pushed the target to

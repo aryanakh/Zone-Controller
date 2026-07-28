@@ -29,6 +29,11 @@ blueprint:
          input_select overrides this: "Away" forces the eco preset (Eco mode) and
          "Vacation" turns the unit off entirely.
 
+      5. Hallway high-temp cap - a whole-house cooling backstop. If no room is
+         calling but the unit's sensed (hallway) temperature climbs above the cap
+         (default 76), it forces cooling anyway so common areas never drift too
+         hot, releasing ~0.5 below the cap. A room's demand always takes priority.
+
     Damper polarity is INVERTED (normally-open): off = OPEN, on = CLOSED.
 
     Note: because arbitration requires it, this coordinator fully owns the unit's
@@ -197,6 +202,38 @@ blueprint:
           selector:
             text:
 
+    comfort_section:
+      name: Hallway High-Temp Cap
+      icon: mdi:thermometer-alert
+      collapsed: false
+      input:
+        hallway_cap_enable:
+          name: Enable hallway high-temp cap
+          description: >
+            A whole-house comfort backstop. When on, if the unit's own sensed
+            (hallway) temperature climbs above the cap below, the coordinator
+            forces cooling even when no individual room is calling - so common
+            areas never drift too hot. It engages above the cap and releases
+            ~0.5 below it to avoid short-cycling. For the unit to actually run,
+            keep the Setpoint Force-Run feature on (below).
+          default: true
+          selector:
+            boolean:
+        hallway_max_temp:
+          name: Hallway max temperature (deg)
+          description: >
+            Force cooling when the sensed hallway temperature rises above this.
+            Only forces cooling - it never forces heat. Ignored while the unit is
+            forced off (house mode Vacation, or away with the turn-off action).
+          default: 76
+          selector:
+            number:
+              min: 68
+              max: 90
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
+
     setpoint_section:
       name: Setpoint Force-Run (optional)
       icon: mdi:thermostat
@@ -309,6 +346,8 @@ variables:
   away_action: !input away_action
   away_preset: !input away_preset
   home_preset: !input home_preset
+  hallway_cap_enable: !input hallway_cap_enable
+  hallway_max_temp: !input hallway_max_temp
   manage_setpoint: !input manage_setpoint
   run_offset: !input run_offset
   setpoint_floor: !input setpoint_floor
@@ -336,7 +375,7 @@ variables:
        and (hm_away or (away_action == 'eco_preset' and not home)) }}
   # --- priority arbitration ---
   # First demand helper (in priority order) that is calling wins the direction.
-  winner_dir: >
+  room_dir: >
     {% set ns = namespace(dir='none') %}
     {% for d in zone_demands %}
       {% if ns.dir == 'none' and states(d) in ['heat', 'cool'] %}
@@ -346,6 +385,18 @@ variables:
     {{ ns.dir }}
   main_state: "{{ states(main_climate) }}"
   main_dir: "{{ main_state if main_state in ['heat', 'cool'] else 'off' }}"
+  # --- hallway high-temp cap (whole-house cooling backstop) ---
+  # The unit senses the hallway; if no room is calling but the hallway is over
+  # the cap, force cooling anyway. Engage above the cap, release ~0.5 below it
+  # (using the unit already cooling as memory) to avoid short-cycling.
+  cap_sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
+  cap_sensed: "{{ cap_sensed_raw | float(0) }}"
+  cap_active: >
+    {{ hallway_cap_enable and is_number(cap_sensed_raw) and room_dir == 'none'
+       and (cap_sensed > hallway_max_temp
+            or (main_dir == 'cool' and cap_sensed > hallway_max_temp - 0.5)) }}
+  # A room's demand wins; otherwise the hallway cap can force cooling.
+  winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
   # Is any room still calling in the direction the unit is currently running?
   current_dir_still_calling: >
     {{ main_dir in ['heat', 'cool']
@@ -408,9 +459,11 @@ variables:
     0.5)) %} sp->{{ desired_sp }}{% elif manage_now %} sp-ok{% elif
     manage_setpoint and manual_hard %} sp-manual{% elif manage_setpoint and
     grace_active %} sp-grace{% endif %}
+  # Note when the hallway cap (not a room) is what's driving cooling.
+  status_cap: "{{ ' [cap]' if cap_active else '' }}"
   status_msg: >-
     {{ now().strftime('%H:%M:%S') }} want={{ winner_dir }} have={{ main_dir }}
-    | {{ status_action }} | {{ status_mode }}{{ status_sp }}
+    | {{ status_action }}{{ status_cap }} | {{ status_mode }}{{ status_sp }}
 
 trigger:
   - platform: state
