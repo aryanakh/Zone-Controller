@@ -25,7 +25,9 @@ blueprint:
          (always open) plus the relief path keep the duct from over-pressurizing.
 
       4. Home / away - when nobody is home (a toggle is off AND nobody is inside a
-         wide ~5 mi presence zone) it reduces conditioning.
+         wide ~5 mi presence zone) it reduces conditioning. An optional house-mode
+         input_select overrides this: "Away" forces the eco preset (Eco mode) and
+         "Vacation" turns the unit off entirely.
 
     Damper polarity is INVERTED (normally-open): off = OPEN, on = CLOSED.
 
@@ -35,7 +37,10 @@ blueprint:
     Away note: the default away action sets an eco preset rather than turning the
     unit off, so an always-on room (e.g. a server room) keeps cooling while the
     house is empty. Choose "Turn off" only if no room must run regardless of
-    occupancy.
+    occupancy. NOTE: the house-mode "Vacation" value turns the whole unit off,
+    which also stops any always-on room (e.g. the server room) - use "Away" if
+    the server room must keep cooling while you travel. A house-mode change is
+    picked up on the next safety re-sync (within ~2 min).
   domain: automation
   source_url: https://github.com/aryanakh/zone-controller/blob/main/blueprints/automation/zone_controller/zone_coordinator.yaml
   input:
@@ -112,6 +117,31 @@ blueprint:
       icon: mdi:home-account
       collapsed: false
       input:
+        house_mode:
+          name: House mode selector (optional)
+          description: >
+            An optional input_select that overrides home/away. When it equals the
+            "Away" value below the unit is forced into the eco preset (Eco mode);
+            when it equals the "Vacation" value the unit is turned off entirely.
+            Any other value (e.g. Home) falls back to the presence logic below.
+            Leave unset to rely only on the toggle + presence zone.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_select
+        house_mode_away:
+          name: House mode - "Away" value
+          description: The input_select option that means Away (forces the eco preset).
+          default: Away
+          selector:
+            text:
+        house_mode_vacation:
+          name: House mode - "Vacation" value
+          description: The input_select option that means Vacation (turns the unit off).
+          default: Vacation
+          selector:
+            text:
         home_occupied:
           name: Home occupied toggle
           description: An input_boolean that is on while the house should be treated as occupied.
@@ -258,6 +288,9 @@ variables:
   relief_damper: !input relief_damper
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
+  house_mode: !input house_mode
+  house_mode_away: !input house_mode_away
+  house_mode_vacation: !input house_mode_vacation
   home_occupied: !input home_occupied
   presence_zone: !input presence_zone
   away_action: !input away_action
@@ -276,6 +309,18 @@ variables:
   anyone_near: >
     {{ presence_zone is string and (states(presence_zone) | int(0) > 0) }}
   home: "{{ home_toggle or anyone_near }}"
+  # --- house mode selector (optional 3-state override) ---
+  hm_state: "{{ states(house_mode) if house_mode is string else '' }}"
+  hm_away: "{{ house_mode is string and hm_state == house_mode_away }}"
+  hm_vacation: "{{ house_mode is string and hm_state == house_mode_vacation }}"
+  # Turn the whole unit off? Vacation, or presence-away with the turn_off action.
+  force_off: >
+    {{ hm_vacation or (not home and away_action == 'turn_off') }}
+  # Hold the unit in the eco preset (but keep it running)? Away mode, or
+  # presence-away with the eco action - unless we are turning the unit off.
+  want_eco: >
+    {{ not force_off
+       and (hm_away or (away_action == 'eco_preset' and not home)) }}
   # --- priority arbitration ---
   # First demand helper (in priority order) that is calling wins the direction.
   winner_dir: >
@@ -305,8 +350,7 @@ variables:
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
   # --- setpoint force-run ---
   unit_should_run: >
-    {{ winner_dir in ['heat', 'cool']
-       and not (not home and away_action == 'turn_off') }}
+    {{ winner_dir in ['heat', 'cool'] and not force_off }}
   sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   sensed_valid: "{{ is_number(sensed_raw) }}"
   sensed: "{{ sensed_raw | float(0) }}"
@@ -371,11 +415,12 @@ action:
         target:
           entity_id: !input relief_damper
 
-  # --- 2. Away: eco preset apply / restore -----------------------------------
+  # --- 2. Eco preset apply / restore -----------------------------------------
+  # Applies while House mode = Away, or presence-away with the eco action.
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ away_action == 'eco_preset' and not home and current_preset != away_preset }}"
+            value_template: "{{ want_eco and current_preset != away_preset }}"
         sequence:
           - service: climate.set_preset_mode
             target:
@@ -384,7 +429,7 @@ action:
               preset_mode: !input away_preset
       - conditions:
           - condition: template
-            value_template: "{{ away_action == 'eco_preset' and home and current_preset == away_preset }}"
+            value_template: "{{ not want_eco and not force_off and current_preset == away_preset }}"
         sequence:
           - service: climate.set_preset_mode
             target:
@@ -394,10 +439,11 @@ action:
 
   # --- 3. Unit direction / on / off ------------------------------------------
   - choose:
-      # Hard away-off (opt-in): stop the unit entirely while away.
+      # Forced off: House mode = Vacation, or presence-away with the turn_off
+      # action. Stops the entire unit (including any always-on room).
       - conditions:
           - condition: template
-            value_template: "{{ not home and away_action == 'turn_off' }}"
+            value_template: "{{ force_off }}"
         sequence:
           - condition: template
             value_template: "{{ main_state != 'off' }}"

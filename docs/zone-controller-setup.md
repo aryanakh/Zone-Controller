@@ -144,12 +144,23 @@ Create **one** automation from the **Coordinator** blueprint:
 - Relief valve damper switch: `switch.damper_theater`
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
+- House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
+  reads **Away** the unit is forced into the eco preset (Eco mode); when it reads
+  **Vacation** the unit is turned off. Any other value falls back to the
+  presence logic below.
+  - House mode "Away" value: **Away** · House mode "Vacation" value: **Vacation**
+    *(match your selector's exact option labels)*
 - Home occupied toggle: `input_boolean.<your_home_occupied>`
 - Wide presence zone: `zone.home_wide`
 - Away action: **Set eco preset** *(keeps the unit running so the server room
   stays cooled while the house is empty)*
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
+
+> ⚠️ **Vacation turns the whole unit off**, which also stops the always-on
+> server room. If the server room must keep cooling while you travel, use
+> **Away** instead of Vacation. A house-mode change is applied on the next
+> safety re-sync (within ~2 min), not instantly.
 - **Setpoint Force-Run** (optional but recommended — see below):
   - Manage the unit's setpoint: **on**
   - Force-run offset: **2** · Setpoint floor: **60** · Setpoint ceiling: **85**
@@ -210,6 +221,10 @@ satisfied. The target is clamped between the floor and ceiling.
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
    `zone.home_wide`; the configured away action fires (eco preset by default).
+9. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
+   unit switches to the eco preset but keeps running. Set it to **Vacation** →
+   the unit turns off entirely (server room included). Set it back to **Home** →
+   the eco preset is restored and normal operation resumes.
 9. **Force-run.** With force-run enabled, set the central thermostat to a mild
    value (e.g. 72) while a room calls for cooling and the hallway is cooler than
    that. The coordinator should drive the target down (≈ sensed − 2) so the unit

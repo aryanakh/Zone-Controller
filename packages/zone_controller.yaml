@@ -41,6 +41,8 @@
 #   - Your existing toggles (this package does NOT create these):
 #       input_boolean.<your_sleep_mode>       (master sleep / pre-cool override)
 #       input_boolean.<your_home_occupied>    (home/away toggle)
+#       input_select.<your_house_mode>        (optional: Home / Away / Vacation -
+#                                              Away => eco preset, Vacation => off)
 # =============================================================================
 
 input_number:

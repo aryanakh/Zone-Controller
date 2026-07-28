@@ -105,7 +105,9 @@ Runs once for the whole house. It:
   other damper is closed, so the always-open hallway plus the relief path keep the
   duct from over-pressurizing;
 - handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone), defaulting
-  to an eco preset so an always-on room keeps running while the house is empty.
+  to an eco preset so an always-on room keeps running while the house is empty;
+- honours an optional **house-mode selector** — `Away` forces the eco preset,
+  `Vacation` turns the unit off.
 
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints (`input_number`), per-room
@@ -209,6 +211,8 @@ Full step-by-step field values and a verification checklist are in
   master bedroom actively cools toward 68 °F from around 8pm for a cold bed.
 - **Home/away + proximity** — conditioning is reduced when the house is empty,
   resuming when someone comes within ~5 mi.
+- **House mode selector** — an optional `input_select` overrides home/away:
+  **Away** forces the eco preset (Eco mode), **Vacation** turns the unit off.
 - **Pressure relief** — the theater damper opens automatically so the duct is
   never over-pressurized.
 - **Fail-open** — normally-open dampers spring open on power loss.
