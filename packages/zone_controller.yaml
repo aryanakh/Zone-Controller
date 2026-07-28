@@ -140,6 +140,12 @@ input_text:
     initial: none
     icon: mdi:server
 
+  # Coordinator writes a one-line summary of each decision here (diagnostic).
+  zc_status:
+    name: Zone controller status
+    max: 255
+    icon: mdi:message-text-outline
+
 # Remembers when the unit last changed direction (compressor anti-short-cycle).
 input_datetime:
   zc_last_changeover:

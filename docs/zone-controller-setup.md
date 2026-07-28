@@ -144,6 +144,11 @@ Create **one** automation from the **Coordinator** blueprint:
 - Relief valve damper switch: `switch.damper_theater`
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
+- Status / decision output *(optional but recommended)*: `input_text.zc_status`
+  — the coordinator writes a one-line summary of every decision here, e.g.
+  `10:15:03 want=cool have=off | START-cool | home sp->71`. Add it to a dashboard
+  (or just watch it in Developer Tools → States) to see exactly what the
+  coordinator did and why on each run. See **Reading the status line** below.
 - House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
   reads **Away** the unit is forced into the eco preset (Eco mode); when it reads
   **Vacation** the unit is turned off. Any other value falls back to the
@@ -245,6 +250,46 @@ confirm the coordinator's core expressions:
 winner_dir:        {% set ns = namespace(dir='none') %}{% for d in zone_demands %}{% if ns.dir=='none' and states(d) in ['heat','cool'] %}{% set ns.dir=states(d) %}{% endif %}{% endfor %}{{ ns.dir }}
 all_others_closed: {{ zone_dampers | reject('is_state','off') | list | count == (zone_dampers | count) }}
 ```
+
+### Reading the status line
+
+If you wired up the optional `input_text.zc_status` helper, the coordinator
+writes one line per run describing exactly what it decided. Format:
+
+```
+<time> want=<dir> have=<dir> | <action> | <mode>[ <setpoint>]
+```
+
+- **want=** — the direction the winning (highest-priority calling) room asked for
+  (`heat` / `cool` / `none`).
+- **have=** — the direction the unit is currently in (`heat` / `cool` / `off`).
+- **action** — what the coordinator did to the unit this run:
+  - `START-cool` / `START-heat` — unit was off and a room called, so it started it.
+  - `RUN-cool` / `RUN-heat` — already running the right direction, left it.
+  - `FLIP-heat` / `FLIP-cool` — reversed direction for a higher-priority room.
+  - `HOLD-cool(cooldown 1/3m)` — a flip is wanted but the compressor cooldown is
+    blocking it (1 of 3 min elapsed); holds the current direction.
+  - `OFF(no-demand)` — no room is calling, so it shut the unit off.
+  - `OFF` — forced off (house mode Vacation, or away with the turn-off action).
+- **mode** — `home`, `away`, `presence-away(eco)`, `away(eco)` (house mode Away),
+  or `vacation`.
+- **setpoint** (only when force-run is enabled) — `sp->71` (pushed the target to
+  71), `sp-ok` (already correct), `sp-manual` (respecting the hard override), or
+  `sp-grace` (inside the manual-edit grace window).
+
+Examples:
+
+```
+10:15:03 want=cool have=off  | START-cool          | home sp->71
+10:41:12 want=none have=cool | OFF(no-demand)       | home
+11:02:55 want=heat have=cool | HOLD-cool(cooldown 1/3m) | home
+18:30:00 want=none have=off  | OFF                  | vacation
+```
+
+If the status line **never updates**, the coordinator automation itself isn't
+running — check that it's enabled and look at its trace. If it updates but shows
+`want=none` while a room is hot, the room isn't publishing demand (see the
+troubleshooting flow: check that room's demand `input_text` and temp sensor).
 
 ## Notes & limitations
 

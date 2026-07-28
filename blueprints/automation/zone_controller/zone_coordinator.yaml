@@ -111,6 +111,18 @@ blueprint:
             entity:
               filter:
                 - domain: input_datetime
+        status_helper:
+          name: Status / decision output (input_text, optional)
+          description: >
+            Optional input_text the coordinator writes a one-line summary of each
+            decision to (e.g. "10:15:03 want=cool have=off | START-cool | home").
+            Purely diagnostic - watch it to see what the coordinator did and why.
+            Create the helper with max length 255 so long lines aren't truncated.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_text
 
     presence_section:
       name: Home / Away
@@ -288,6 +300,7 @@ variables:
   relief_damper: !input relief_damper
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
+  status_helper: !input status_helper
   house_mode: !input house_mode
   house_mode_away: !input house_mode_away
   house_mode_vacation: !input house_mode_vacation
@@ -377,6 +390,27 @@ variables:
   manage_now: >
     {{ manage_setpoint and unit_should_run and not manual_hard
        and sensed_valid }}
+  # --- status / decision summary (for the optional status_helper) ---
+  # What the unit-direction block (section 3) will do this run.
+  status_action: >-
+    {% if force_off %}OFF{% elif winner_dir == 'none' %}OFF(no-demand){% elif
+    main_dir == 'off' %}START-{{ winner_dir }}{% elif need_flip and allow_flip
+    %}FLIP-{{ winner_dir }}{% elif need_flip %}HOLD-{{ main_dir }}(cooldown {{
+    mins_since_change | round(0) }}/{{ min_changeover }}m){% else %}RUN-{{
+    main_dir }}{% endif %}
+  # Why we're in the away/eco/off state (or plain "home").
+  status_mode: >-
+    {% if hm_vacation %}vacation{% elif hm_away %}away(eco){% elif want_eco
+    %}presence-away(eco){% elif not home %}away{% else %}home{% endif %}
+  # What the setpoint force-run block (section 4) will do this run.
+  status_sp: >-
+    {% if manage_now and ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs >
+    0.5)) %} sp->{{ desired_sp }}{% elif manage_now %} sp-ok{% elif
+    manage_setpoint and manual_hard %} sp-manual{% elif manage_setpoint and
+    grace_active %} sp-grace{% endif %}
+  status_msg: >-
+    {{ now().strftime('%H:%M:%S') }} want={{ winner_dir }} have={{ main_dir }}
+    | {{ status_action }} | {{ status_mode }}{{ status_sp }}
 
 trigger:
   - platform: state
@@ -546,3 +580,17 @@ action:
                     data:
                       value: "{{ desired_sp }}"
     default: []
+
+  # --- 5. Status / decision output (optional) --------------------------------
+  # Publish a one-line summary of what this run decided, for observability. The
+  # status variables are rendered at run start, so this reflects the decision.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ status_helper is string }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "{{ status_msg }}"

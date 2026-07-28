@@ -111,8 +111,9 @@ Runs once for the whole house. It:
 
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints (`input_number`), per-room
-enable toggles (`input_boolean`), per-room demand helpers (`input_text`), the
-changeover timestamp (`input_datetime`), and the wide presence `zone`. It does
+enable toggles (`input_boolean`), per-room demand helpers plus the coordinator
+status line (`input_text`), the changeover timestamp (`input_datetime`), and the
+wide presence `zone`. It does
 **not** create the sleep-mode or home-occupied booleans — point the blueprints at
 your existing ones.
 
@@ -213,6 +214,9 @@ Full step-by-step field values and a verification checklist are in
   resuming when someone comes within ~5 mi.
 - **House mode selector** — an optional `input_select` overrides home/away:
   **Away** forces the eco preset (Eco mode), **Vacation** turns the unit off.
+- **Status output** — the coordinator writes a one-line summary of every decision
+  to an optional `input_text` (e.g. `want=cool have=off | START-cool | home
+  sp->71`), so you can see at a glance what it did and why.
 - **Pressure relief** — the theater damper opens automatically so the duct is
   never over-pressurized.
 - **Fail-open** — normally-open dampers spring open on power loss.
