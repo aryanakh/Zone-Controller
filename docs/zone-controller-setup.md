@@ -146,7 +146,7 @@ Create **one** automation from the **Coordinator** blueprint:
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
   — the coordinator writes a one-line summary of every decision here, e.g.
-  `10:15:03 want=cool have=off | START-cool | home sp->71`. Add it to a dashboard
+  `21:15 - Starting cooling - set thermostat to 72° - Home`. Add it to a dashboard
   (or just watch it in Developer Tools → States) to see exactly what the
   coordinator did and why on each run. See **Reading the status line** below.
 - House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
@@ -170,9 +170,12 @@ Create **one** automation from the **Coordinator** blueprint:
   - High limit / band high: **76** — the `heat_cool` cool target (or, in cap
     mode, the temperature above which cooling is forced).
   - Band low: **64** — the `heat_cool` heat target (band mode only).
-  - A room's own demand always takes priority over the idle backstop. The band
-    uses the unit's native dual-setpoint control, so it runs even without
-    Setpoint Force-Run; the cap mode needs Force-Run on to actually run.
+  - A room's own demand always takes priority over the idle backstop. **Band mode
+    requires Setpoint Force-Run (below) to be enabled:** while idling the band
+    uses the unit's native dual-setpoint control, but when a room starts calling
+    the unit switches to a single mode and inherits the band's target (e.g. the
+    high) — Force-Run is what overrides that so the unit actually runs for the
+    room. (Cap mode likewise needs Force-Run on to run.)
 
 > ⚠️ **Vacation turns the whole unit off**, which also stops the always-on
 > server room. If the server room must keep cooling while you travel, use
@@ -240,9 +243,10 @@ satisfied. The target is clamped between the floor and ceiling.
    `zone.home_wide`; the configured away action fires (eco preset by default).
 9. **Idle band.** With every room satisfied (nobody calling) and idle behavior
    set to **hold band**, the unit should sit in `heat_cool` on the 64–76 band
-   (`BAND 64-76` in the status line) — cooling if the house exceeds 76, heating
-   below 64, otherwise coasting. (In **cap** mode instead, it stays off until the
-   hallway passes 76, then shows `START-cool [cap]`.)
+   (`Idle - holding 64-76° band` in the status line) — cooling if the house
+   exceeds 76, heating below 64, otherwise coasting. (In **cap** mode instead, it
+   stays off until the hallway passes 76, then shows
+   `Starting cooling (hallway over 76°)`.)
 10. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
    unit switches to the eco preset but keeps running. Set it to **Vacation** →
    the unit turns off entirely (server room included). Set it back to **Home** →
@@ -271,46 +275,50 @@ all_others_closed: {{ zone_dampers | reject('is_state','off') | list | count == 
 ### Reading the status line
 
 If you wired up the optional `input_text.zc_status` helper, the coordinator
-writes one line per run describing exactly what it decided. Format:
+writes one plain-English line per run describing what it decided. Format:
 
 ```
-<time> want=<dir> have=<dir> | <action> | <mode>[ <setpoint>]
+<time> - <what the unit is doing> - <thermostat action> - <house mode>
 ```
 
-- **want=** — the direction the winning (highest-priority calling) room asked for
-  (`heat` / `cool` / `none`).
-- **have=** — the direction the unit is currently in (`heat` / `cool` / `off`).
-- **action** — what the coordinator did to the unit this run:
-  - `START-cool` / `START-heat` — unit was off and a room called, so it started it.
-  - `RUN-cool` / `RUN-heat` — already running the right direction, left it.
-  - `FLIP-heat` / `FLIP-cool` — reversed direction for a higher-priority room.
-  - `HOLD-cool(cooldown 1/3m)` — a flip is wanted but the compressor cooldown is
-    blocking it (1 of 3 min elapsed); holds the current direction.
-  - `OFF(no-demand)` — no room is calling, so it shut the unit off (idle = off).
-  - `BAND 64-76` — no room is calling and idle behavior is **hold band**, so the
-    unit is held in `heat_cool` between those limits.
-  - `OFF` — forced off (house mode Vacation, or away with the turn-off action).
-  - A `[cap]` tag after the action (e.g. `START-cool [cap]`) means the idle
-    **high-temp cap** is what's driving cooling, not any individual room.
-- **mode** — `home`, `away`, `presence-away(eco)`, `away(eco)` (house mode Away),
-  or `vacation`.
-- **setpoint** (only when force-run is enabled) — `sp->71` (pushed the target to
-  71), `sp-ok` (already correct), `sp-manual` (respecting the hard override), or
-  `sp-grace` (inside the manual-edit grace window).
+The **thermostat action** part only appears when Setpoint Force-Run is enabled.
+
+**What the unit is doing:**
+- `Starting cooling` / `Starting heating` — unit was off (or idling) and a room called.
+- `Cooling` / `Heating` — already running the right direction, left it.
+- `Switching to cooling` / `Switching to heating` — reversed for a higher-priority room.
+- `Waiting to switch to heating (compressor cooldown 1/3 min)` — a reversal is
+  wanted but the compressor cooldown is blocking it (1 of 3 min elapsed).
+- `Off - no room calling` — nothing is calling and idle behavior is "off".
+- `Idle - holding 64-76° band` — nothing is calling and idle behavior is "hold band".
+- `Off - forced (vacation)` / `Off - forced (away)` — house mode Vacation, or
+  away with the turn-off action.
+- `... (hallway over 76°)` — cooling only because the hallway passed the cap (no
+  room asked), e.g. `Starting cooling (hallway over 76°)`.
+
+**Thermostat action** (force-run):
+- `set thermostat to 72°` — pushed the target so the unit actually runs.
+- `thermostat already at 72°` — target was already right, left it.
+- `you changed the thermostat - keeping your value` — you edited it by hand; honoring it.
+- `recent manual change - leaving thermostat alone` — inside the manual-edit grace window.
+- `manual override - thermostat left alone` — the hard manual override toggle is on.
+
+**House mode:** `Home`, `Away`, `Away (eco)`, or `Vacation`.
 
 Examples:
 
 ```
-10:15:03 want=cool have=off  | START-cool          | home sp->71
-10:41:12 want=none have=cool | OFF(no-demand)       | home
-11:02:55 want=heat have=cool | HOLD-cool(cooldown 1/3m) | home
-18:30:00 want=none have=off  | OFF                  | vacation
+21:15 - Starting cooling - set thermostat to 72° - Home
+21:41 - Cooling - thermostat already at 72° - Home
+22:03 - Waiting to switch to heating (compressor cooldown 1/3 min) - Home
+23:00 - Idle - holding 64-76° band - Home
+18:30 - Off - forced (vacation) - Vacation
 ```
 
 If the status line **never updates**, the coordinator automation itself isn't
-running — check that it's enabled and look at its trace. If it updates but shows
-`want=none` while a room is hot, the room isn't publishing demand (see the
-troubleshooting flow: check that room's demand `input_text` and temp sensor).
+running — check that it's enabled and look at its trace. If it shows
+`Off - no room calling` while a room is hot, that room isn't publishing demand
+(check its demand `input_text` and temp sensor).
 
 ## Notes & limitations
 

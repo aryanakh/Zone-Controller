@@ -125,7 +125,7 @@ blueprint:
           name: Status / decision output (input_text, optional)
           description: >
             Optional input_text the coordinator writes a one-line summary of each
-            decision to (e.g. "10:15:03 want=cool have=off | START-cool | home").
+            decision to (e.g. "21:15 - Starting cooling - set thermostat to 72° - Home").
             Purely diagnostic - watch it to see what the coordinator did and why.
             Create the helper with max length 255 so long lines aren't truncated.
           default: {}
@@ -223,8 +223,11 @@ blueprint:
             - Hold a heat_cool safety band: keep the unit in heat_cool holding the
               low/high band below, so the whole house stays between them - a high
               AND low backstop. Your unit must support a heat_cool / auto range
-              mode. This uses the unit's own dual-setpoint control (no force-run
-              needed while idling).
+              mode. While idling this uses the unit's own dual-setpoint control,
+              but you MUST keep Setpoint Force-Run (below) enabled: when a room
+              starts calling, the unit switches to a single mode and inherits the
+              band's target (e.g. the high) - force-run is what overrides that so
+              the unit actually runs for the room.
           default: hold_band
           selector:
             select:
@@ -470,8 +473,13 @@ variables:
   manual_hard: "{{ setpoint_manual is string and is_state(setpoint_manual, 'on') }}"
   has_bookkeeping: "{{ last_cmd_setpoint is string and manual_until is string }}"
   last_cmd_valid: "{{ has_bookkeeping and is_number(states(last_cmd_setpoint)) }}"
+  # Only a genuine manual edit when the unit is ALREADY running in a single
+  # direction. On a transition out of off / heat_cool (the idle band), the
+  # single-mode setpoint is inherited (e.g. the band high), not user-set, so it
+  # must not be mistaken for a manual edit - otherwise force-run backs off and
+  # leaves the unit at the stale (band) target instead of forcing it to run.
   manual_edit_detected: >
-    {{ last_cmd_valid and cur_sp_valid
+    {{ last_cmd_valid and cur_sp_valid and main_dir in ['heat', 'cool']
        and (cur_sp - (states(last_cmd_setpoint) | float(0))) | abs > 0.2 }}
   grace_active: >
     {{ has_bookkeeping
@@ -483,29 +491,35 @@ variables:
     {{ manage_setpoint and unit_should_run and not manual_hard
        and sensed_valid }}
   # --- status / decision summary (for the optional status_helper) ---
-  # What the unit-direction block (section 3) will do this run.
+  # A plain-English description of what section 3 (unit direction) does this run.
+  status_dir_word: "{{ 'cooling' if winner_dir == 'cool' else 'heating' }}"
   status_action: >-
-    {% if force_off %}OFF{% elif winner_dir == 'none' and idle_hold %}BAND {{
-    idle_low }}-{{ idle_high }}{% elif winner_dir == 'none' %}OFF(no-demand){%
-    elif main_dir == 'off' %}START-{{ winner_dir }}{% elif need_flip and
-    allow_flip %}FLIP-{{ winner_dir }}{% elif need_flip %}HOLD-{{ main_dir
-    }}(cooldown {{ mins_since_change | round(0) }}/{{ min_changeover }}m){% else
-    %}RUN-{{ main_dir }}{% endif %}
-  # Why we're in the away/eco/off state (or plain "home").
+    {% if force_off %}Off - forced ({{ 'vacation' if hm_vacation else 'away' }}){%
+    elif winner_dir == 'none' and idle_hold %}Idle - holding {{ idle_low }}-{{
+    idle_high }}° band{% elif winner_dir == 'none' %}Off - no room calling{%
+    elif main_dir == 'off' %}Starting {{ status_dir_word }}{% elif need_flip and
+    allow_flip %}Switching to {{ status_dir_word }}{% elif need_flip %}Waiting to
+    switch to {{ status_dir_word }} (compressor cooldown {{ mins_since_change |
+    round(0) }}/{{ min_changeover }} min){% else %}{{ 'Cooling' if main_dir ==
+    'cool' else 'Heating' }}{% endif %}
+  # If cooling only because the hallway is over the cap (no room asked), say so.
+  status_cap: "{{ ' (hallway over ' ~ idle_high ~ '°)' if cap_active else '' }}"
+  # Plain-English house mode.
   status_mode: >-
-    {% if hm_vacation %}vacation{% elif hm_away %}away(eco){% elif want_eco
-    %}presence-away(eco){% elif not home %}away{% else %}home{% endif %}
-  # What the setpoint force-run block (section 4) will do this run.
+    {% if hm_vacation %}Vacation{% elif want_eco %}Away (eco){% elif not home
+    %}Away{% else %}Home{% endif %}
+  # Plain-English setpoint / force-run outcome (empty when it isn't managing).
   status_sp: >-
-    {% if manage_now and ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs >
-    0.5)) %} sp->{{ desired_sp }}{% elif manage_now %} sp-ok{% elif
-    manage_setpoint and manual_hard %} sp-manual{% elif manage_setpoint and
-    grace_active %} sp-grace{% endif %}
-  # Note when the hallway cap (not a room) is what's driving cooling.
-  status_cap: "{{ ' [cap]' if cap_active else '' }}"
+    {% if manage_setpoint and manual_hard %}manual override - thermostat left
+    alone{% elif manage_now and manual_edit_detected and has_bookkeeping %}you
+    changed the thermostat - keeping your value{% elif manage_now and grace_active
+    %}recent manual change - leaving thermostat alone{% elif manage_now and
+    ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs > 0.5)) %}set thermostat
+    to {{ desired_sp }}°{% elif manage_now %}thermostat already at {{ desired_sp
+    }}°{% endif %}
   status_msg: >-
-    {{ now().strftime('%H:%M:%S') }} want={{ winner_dir }} have={{ main_dir }}
-    | {{ status_action }}{{ status_cap }} | {{ status_mode }}{{ status_sp }}
+    {{ now().strftime('%H:%M') }} - {{ status_action }}{{ status_cap }}{% if
+    status_sp | trim %} - {{ status_sp | trim }}{% endif %} - {{ status_mode }}
 
 trigger:
   - platform: state
