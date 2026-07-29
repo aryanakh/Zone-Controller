@@ -189,6 +189,14 @@ Create **one** automation from the **Coordinator** blueprint:
   - Last-commanded setpoint helper: `input_number.zc_last_cmd_setpoint`
   - Manual-grace-until helper: `input_datetime.zc_manual_until`
 
+> **The auto manual-edit grace is optional.** It only runs when BOTH the
+> last-commanded and manual-grace-until helpers are set. If you'd rather the
+> coordinator always manage the setpoint and never try to auto-detect hand edits
+> (relying only on the hard `zc_setpoint_manual` toggle for deliberate control),
+> just leave those two helpers unset — that removes the whole grace mechanism.
+> When it is enabled, grace is armed for at most one window per edit and then
+> self-heals, so it can't get stuck holding the thermostat.
+
 > Choose **Turn the unit off** for the away action only if you have no room that
 > must be conditioned regardless of occupancy — it stops the server room too.
 
