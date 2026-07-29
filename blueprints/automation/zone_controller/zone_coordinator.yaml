@@ -223,8 +223,11 @@ blueprint:
             - Hold a heat_cool safety band: keep the unit in heat_cool holding the
               low/high band below, so the whole house stays between them - a high
               AND low backstop. Your unit must support a heat_cool / auto range
-              mode. This uses the unit's own dual-setpoint control (no force-run
-              needed while idling).
+              mode. While idling this uses the unit's own dual-setpoint control,
+              but you MUST keep Setpoint Force-Run (below) enabled: when a room
+              starts calling, the unit switches to a single mode and inherits the
+              band's target (e.g. the high) - force-run is what overrides that so
+              the unit actually runs for the room.
           default: hold_band
           selector:
             select:
@@ -470,8 +473,13 @@ variables:
   manual_hard: "{{ setpoint_manual is string and is_state(setpoint_manual, 'on') }}"
   has_bookkeeping: "{{ last_cmd_setpoint is string and manual_until is string }}"
   last_cmd_valid: "{{ has_bookkeeping and is_number(states(last_cmd_setpoint)) }}"
+  # Only a genuine manual edit when the unit is ALREADY running in a single
+  # direction. On a transition out of off / heat_cool (the idle band), the
+  # single-mode setpoint is inherited (e.g. the band high), not user-set, so it
+  # must not be mistaken for a manual edit - otherwise force-run backs off and
+  # leaves the unit at the stale (band) target instead of forcing it to run.
   manual_edit_detected: >
-    {{ last_cmd_valid and cur_sp_valid
+    {{ last_cmd_valid and cur_sp_valid and main_dir in ['heat', 'cool']
        and (cur_sp - (states(last_cmd_setpoint) | float(0))) | abs > 0.2 }}
   grace_active: >
     {{ has_bookkeeping
@@ -497,10 +505,11 @@ variables:
     %}presence-away(eco){% elif not home %}away{% else %}home{% endif %}
   # What the setpoint force-run block (section 4) will do this run.
   status_sp: >-
-    {% if manage_now and ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs >
-    0.5)) %} sp->{{ desired_sp }}{% elif manage_now %} sp-ok{% elif
-    manage_setpoint and manual_hard %} sp-manual{% elif manage_setpoint and
-    grace_active %} sp-grace{% endif %}
+    {% if manage_setpoint and manual_hard %} sp-manual{% elif manage_now and
+    manual_edit_detected and has_bookkeeping %} sp-manual-edit{% elif manage_now
+    and grace_active %} sp-grace{% elif manage_now and ((not cur_sp_valid) or
+    ((cur_sp - desired_sp) | abs > 0.5)) %} sp->{{ desired_sp }}{% elif manage_now
+    %} sp-ok{% endif %}
   # Note when the hallway cap (not a room) is what's driving cooling.
   status_cap: "{{ ' [cap]' if cap_active else '' }}"
   status_msg: >-

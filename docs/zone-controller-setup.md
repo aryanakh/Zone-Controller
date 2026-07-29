@@ -170,9 +170,12 @@ Create **one** automation from the **Coordinator** blueprint:
   - High limit / band high: **76** — the `heat_cool` cool target (or, in cap
     mode, the temperature above which cooling is forced).
   - Band low: **64** — the `heat_cool` heat target (band mode only).
-  - A room's own demand always takes priority over the idle backstop. The band
-    uses the unit's native dual-setpoint control, so it runs even without
-    Setpoint Force-Run; the cap mode needs Force-Run on to actually run.
+  - A room's own demand always takes priority over the idle backstop. **Band mode
+    requires Setpoint Force-Run (below) to be enabled:** while idling the band
+    uses the unit's native dual-setpoint control, but when a room starts calling
+    the unit switches to a single mode and inherits the band's target (e.g. the
+    high) — Force-Run is what overrides that so the unit actually runs for the
+    room. (Cap mode likewise needs Force-Run on to run.)
 
 > ⚠️ **Vacation turns the whole unit off**, which also stops the always-on
 > server room. If the server room must keep cooling while you travel, use
