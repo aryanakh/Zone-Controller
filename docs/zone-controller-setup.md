@@ -146,7 +146,7 @@ Create **one** automation from the **Coordinator** blueprint:
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
   — the coordinator writes a one-line summary of every decision here, e.g.
-  `21:15 - Starting cooling - set thermostat to 72° - Home`. Add it to a dashboard
+  `Starting cooling - set thermostat to 72° - Home`. Add it to a dashboard
   (or just watch it in Developer Tools → States) to see exactly what the
   coordinator did and why on each run. See **Reading the status line** below.
 - House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
@@ -275,10 +275,12 @@ all_others_closed: {{ zone_dampers | reject('is_state','off') | list | count == 
 ### Reading the status line
 
 If you wired up the optional `input_text.zc_status` helper, the coordinator
-writes one plain-English line per run describing what it decided. Format:
+describes what it decided in plain English. It **updates only when the decision
+changes** (not every cycle), so use the entity's *last changed* time to see when
+the coordinator last acted. Format:
 
 ```
-<time> - <what the unit is doing> - <thermostat action> - <house mode>
+<what the unit is doing> - <thermostat action> - <house mode>
 ```
 
 The **thermostat action** part only appears when Setpoint Force-Run is enabled.
@@ -308,11 +310,11 @@ The **thermostat action** part only appears when Setpoint Force-Run is enabled.
 Examples:
 
 ```
-21:15 - Starting cooling - set thermostat to 72° - Home
-21:41 - Cooling - thermostat already at 72° - Home
-22:03 - Waiting to switch to heating (compressor cooldown 1/3 min) - Home
-23:00 - Idle - holding 64-76° band - Home
-18:30 - Off - forced (vacation) - Vacation
+Starting cooling - set thermostat to 72° - Home
+Cooling - thermostat already at 72° - Home
+Waiting to switch to heating (compressor cooldown 1/3 min) - Home
+Idle - holding 64-76° band - Home
+Off - forced (vacation) - Vacation
 ```
 
 If the status line **never updates**, the coordinator automation itself isn't

@@ -125,7 +125,9 @@ blueprint:
           name: Status / decision output (input_text, optional)
           description: >
             Optional input_text the coordinator writes a one-line summary of each
-            decision to (e.g. "21:15 - Starting cooling - set thermostat to 72° - Home").
+            decision to (e.g. "Starting cooling - set thermostat to 72° - Home").
+            It only rewrites when the decision changes, so watch its last-changed
+            time to see when the coordinator last acted.
             Purely diagnostic - watch it to see what the coordinator did and why.
             Create the helper with max length 255 so long lines aren't truncated.
           default: {}
@@ -465,11 +467,18 @@ variables:
   cur_sp_raw: "{{ state_attr(main_climate, 'temperature') }}"
   cur_sp_valid: "{{ is_number(cur_sp_raw) }}"
   cur_sp: "{{ cur_sp_raw | float(0) }}"
+  # The thermostat's setpoint resolution (default 1 deg). Used to round the target
+  # so what we command equals what the thermostat stores back - otherwise a
+  # fractional target the thermostat rounds looks like a manual edit next cycle.
+  sp_step: >
+    {% set s = state_attr(main_climate, 'target_temp_step') | float(0) %}
+    {{ s if s > 0 else 1 }}
   # Desired forcing target: push a few degrees past the sensed temperature so the
-  # unit runs, clamped to the floor/ceiling.
-  desired_sp: >
+  # unit runs, clamped to the floor/ceiling, then rounded to the thermostat step.
+  desired_sp_raw: >
     {{ [[ (sensed - run_offset) if winner_dir == 'cool' else (sensed + run_offset),
           setpoint_floor ] | max, setpoint_ceiling ] | min }}
+  desired_sp: "{{ ((desired_sp_raw | float(0)) / sp_step) | round(0) * sp_step }}"
   manual_hard: "{{ setpoint_manual is string and is_state(setpoint_manual, 'on') }}"
   has_bookkeeping: "{{ last_cmd_setpoint is string and manual_until is string }}"
   last_cmd_valid: "{{ has_bookkeeping and is_number(states(last_cmd_setpoint)) }}"
@@ -478,9 +487,13 @@ variables:
   # single-mode setpoint is inherited (e.g. the band high), not user-set, so it
   # must not be mistaken for a manual edit - otherwise force-run backs off and
   # leaves the unit at the stale (band) target instead of forcing it to run.
+  # The threshold is > 0.9 deg (a real hand nudge), NOT sub-degree: thermostat
+  # rounding / C-F conversion can leave the reported target ~0.5 off what we
+  # commanded, and that must never be mistaken for a manual edit (it would arm
+  # the grace window every cycle and stall force-run all night).
   manual_edit_detected: >
     {{ last_cmd_valid and cur_sp_valid and main_dir in ['heat', 'cool']
-       and (cur_sp - (states(last_cmd_setpoint) | float(0))) | abs > 0.2 }}
+       and (cur_sp - (states(last_cmd_setpoint) | float(0))) | abs > 0.9 }}
   grace_active: >
     {{ has_bookkeeping
        and states(manual_until) not in ['unknown', 'unavailable', '']
@@ -517,9 +530,12 @@ variables:
     ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs > 0.5)) %}set thermostat
     to {{ desired_sp }}°{% elif manage_now %}thermostat already at {{ desired_sp
     }}°{% endif %}
+  # No timestamp in the value - HA tracks last_changed for free, and a timestamp
+  # would make the helper rewrite every run. The write below is skipped when the
+  # message is unchanged, so it only updates when the decision actually changes.
   status_msg: >-
-    {{ now().strftime('%H:%M') }} - {{ status_action }}{{ status_cap }}{% if
-    status_sp | trim %} - {{ status_sp | trim }}{% endif %} - {{ status_mode }}
+    {{ status_action }}{{ status_cap }}{% if status_sp | trim %} - {{ status_sp |
+    trim }}{% endif %} - {{ status_mode }}
 
 trigger:
   - platform: state
@@ -729,7 +745,7 @@ action:
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ status_helper is string }}"
+            value_template: "{{ status_helper is string and states(status_helper) != status_msg }}"
         sequence:
           - service: input_text.set_value
             target:
