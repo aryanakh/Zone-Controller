@@ -221,8 +221,8 @@ Full step-by-step field values and a verification checklist are in
   off, hold a cooling-only high cap, or hold a `heat_cool` safety band (default
   64–76 °F) so the whole house never drifts too hot *or* too cold.
 - **Status output** — the coordinator writes a one-line summary of every decision
-  to an optional `input_text` (e.g. `want=cool have=off | START-cool | home
-  sp->71`), so you can see at a glance what it did and why.
+  to an optional `input_text` (e.g. `21:15 - Starting cooling - set thermostat to
+  72° - Home`), so you can see at a glance what it did and why.
 - **Pressure relief** — the theater damper opens automatically so the duct is
   never over-pressurized.
 - **Fail-open** — normally-open dampers spring open on power loss.
