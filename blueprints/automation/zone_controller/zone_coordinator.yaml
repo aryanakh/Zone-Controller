@@ -473,11 +473,16 @@ variables:
   sp_step: >
     {% set s = state_attr(main_climate, 'target_temp_step') | float(0) %}
     {{ s if s > 0 else 1 }}
+  # Never command below/above what the thermostat itself accepts - a value it
+  # clamps to its own min/max would read back different from what we recorded and
+  # look like a manual edit. Combine our floor/ceiling with the unit's min/max.
+  sp_lo: "{{ [setpoint_floor, state_attr(main_climate, 'min_temp') | float(setpoint_floor)] | max }}"
+  sp_hi: "{{ [setpoint_ceiling, state_attr(main_climate, 'max_temp') | float(setpoint_ceiling)] | min }}"
   # Desired forcing target: push a few degrees past the sensed temperature so the
-  # unit runs, clamped to the floor/ceiling, then rounded to the thermostat step.
+  # unit runs, clamped to the reachable range, then rounded to the thermostat step.
   desired_sp_raw: >
     {{ [[ (sensed - run_offset) if winner_dir == 'cool' else (sensed + run_offset),
-          setpoint_floor ] | max, setpoint_ceiling ] | min }}
+          sp_lo ] | max, sp_hi ] | min }}
   desired_sp: "{{ ((desired_sp_raw | float(0)) / sp_step) | round(0) * sp_step }}"
   manual_hard: "{{ setpoint_manual is string and is_state(setpoint_manual, 'on') }}"
   has_bookkeeping: "{{ last_cmd_setpoint is string and manual_until is string }}"
@@ -741,6 +746,18 @@ action:
                       entity_id: !input last_cmd_setpoint
                     data:
                       value: "{{ desired_sp }}"
+      # Already at the forcing target (nothing to do): reconcile the baseline to
+      # what the thermostat actually reports, so any residual gap (stepping,
+      # clamping, C-F rounding) never accumulates into a phantom "manual edit".
+      - conditions:
+          - condition: template
+            value_template: "{{ has_bookkeeping and cur_sp_valid }}"
+        sequence:
+          - service: input_number.set_value
+            target:
+              entity_id: !input last_cmd_setpoint
+            data:
+              value: "{{ cur_sp }}"
     default: []
 
   # --- 5. Status / decision output (optional) --------------------------------
