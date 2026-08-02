@@ -103,7 +103,9 @@ Runs once for the whole house. It:
   period after you edit it by hand);
 - drives the **theater damper as a pressure-relief valve** — open only when every
   other damper is closed, so the always-open hallway plus the relief path keep the
-  duct from over-pressurizing;
+  duct from over-pressurizing — or, with **guest-room mode** on, conditions the
+  theater like a bedroom (own sensor + setpoints + sleep target) and opens its
+  damper to serve it, still falling back to relief when the guest isn't calling;
 - handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone), defaulting
   to an eco preset so an always-on room keeps running while the house is empty;
 - honours an optional **house-mode selector** — `Away` forces the eco preset,
@@ -113,8 +115,9 @@ Runs once for the whole house. It:
   keeps the whole house between a low and high limit.
 
 ### 3. Helper package — `packages/zone_controller.yaml`
-Creates the supporting entities: per-room setpoints (`input_number`), per-room
-enable toggles (`input_boolean`), per-room demand helpers plus the coordinator
+Creates the supporting entities: per-room setpoints plus theater guest-room
+setpoints (`input_number`), per-room enable toggles and the theater guest-room
+toggle (`input_boolean`), per-room/theater demand helpers plus the coordinator
 status line (`input_text`), the changeover timestamp (`input_datetime`), and the
 wide presence `zone`. It does
 **not** create the sleep-mode or home-occupied booleans — point the blueprints at
@@ -220,6 +223,9 @@ Full step-by-step field values and a verification checklist are in
 - **Idle backstop** — when no room is calling, choose what the unit does: turn
   off, hold a cooling-only high cap, or hold a `heat_cool` safety band (default
   64–76 °F) so the whole house never drifts too hot *or* too cold.
+- **Theater guest-room mode** — a toggle turns the theater/bonus room from a
+  passive relief valve into a conditioned bedroom (its own sensor + setpoints,
+  with a sleep target), while it still falls back to relief when not in use.
 - **Status output** — the coordinator writes a one-line summary of every decision
   to an optional `input_text` (e.g. `Starting cooling - set thermostat to 72° -
   Home`), updated only when the decision changes, so you can see at a glance what

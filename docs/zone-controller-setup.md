@@ -57,9 +57,12 @@ Edit the package and replace every `# TODO` (the `zone:` latitude/longitude, and
 confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 
 - Setpoints: `input_number.nursery_heat_sp` / `nursery_cool_sp`,
-  `server_cool_sp`, `master_cool_sp` / `master_sleep_cool_sp`
-- Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`, `master_enabled`
-- Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`
+  `server_cool_sp`, `master_cool_sp` / `master_sleep_cool_sp`,
+  `theater_cool_sp` / `theater_sleep_cool_sp`
+- Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
+  `master_enabled`, `theater_guest_mode`
+- Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
+  `theater_demand`
 - `input_datetime.zc_last_changeover`
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
@@ -189,6 +192,19 @@ Create **one** automation from the **Coordinator** blueprint:
   - Last-commanded setpoint helper: `input_number.zc_last_cmd_setpoint`
   - Manual-grace-until helper: `input_datetime.zc_manual_until`
 
+- **Theater Guest Room** *(optional — only when a guest sleeps in the theater)*:
+  - Guest room mode toggle: `input_boolean.theater_guest_mode`
+  - Theater temperature sensor: `sensor.<your_theater_temp>`
+  - Theater cool setpoint: `input_number.theater_cool_sp`
+  - Theater heat setpoint: *(leave unset for cool-only, like the master)*
+  - Theater sleep toggle / sleep cool setpoint: your sleep boolean +
+    `input_number.theater_sleep_cool_sp` *(optional — for a colder night target)*
+  - Theater hysteresis: **0.5**
+  - Theater demand helper: `input_text.theater_demand` — **and also add this same
+    helper to the "Room demand helpers" list above**, at the priority you want
+    the guest room to have (e.g. right after the master bedroom). That is what
+    lets the guest room turn the unit on and take part in arbitration.
+
 > **The auto manual-edit grace is optional.** It only runs when BOTH the
 > last-commanded and manual-grace-until helpers are set. If you'd rather the
 > coordinator always manage the setpoint and never try to auto-detect hand edits
@@ -196,6 +212,14 @@ Create **one** automation from the **Coordinator** blueprint:
 > just leave those two helpers unset — that removes the whole grace mechanism.
 > When it is enabled, grace is armed for at most one window per edit and then
 > self-heals, so it can't get stuck holding the thermostat.
+
+> **Guest room mode** turns the theater from a passive relief valve into a
+> conditioned bedroom. While the toggle is on and the theater is above its cool
+> setpoint it calls for cooling like any room and its damper opens to serve it;
+> while off (or not calling) the theater keeps working as the pressure-relief
+> valve. Because the theater is also the relief path, it needs Setpoint Force-Run
+> on for the unit to actually run for it. A new guest's temperature is picked up
+> on the next re-sync (within ~2 min).
 
 > Choose **Turn the unit off** for the away action only if you have no room that
 > must be conditioned regardless of occupancy — it stops the server room too.
@@ -241,6 +265,11 @@ satisfied. The target is clamped between the floor and ceiling.
 5. **Relief valve.** Force every room damper closed (each switch `on`):
    `switch.damper_theater` goes **off** (open). Open any room damper and the
    theater damper goes **on** (closed).
+   - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
+     theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
+     unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.
+     Satisfy the theater (or turn guest mode off) and it reverts to relief-valve
+     behavior (open only when all other dampers are closed).
 6. **Main on/off.** With a room calling, the unit switches on in the winning
    direction. With every room satisfied/disabled, it switches off.
 7. **Sleep / pre-cool.** Turn on `input_boolean.<your_sleep_mode>`; the master
