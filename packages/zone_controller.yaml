@@ -91,6 +91,25 @@ input_number:
     icon: mdi:bed-clock
     initial: 68
 
+  # Theater / bonus room setpoints, used only when guest-room mode is on.
+  theater_cool_sp:
+    name: Theater cool setpoint (day)
+    min: 65
+    max: 85
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:bed-king
+    initial: 74
+
+  theater_sleep_cool_sp:
+    name: Theater cool setpoint (sleep)
+    min: 60
+    max: 80
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:bed-clock
+    initial: 68
+
   # Bookkeeping for the coordinator's setpoint force-run (last value it wrote).
   zc_last_cmd_setpoint:
     name: Last commanded HVAC setpoint
@@ -113,6 +132,12 @@ input_boolean:
   master_enabled:
     name: Master bedroom enabled
     icon: mdi:bed
+
+  # Theater guest-room mode: while on, the coordinator conditions the theater
+  # like a bedroom instead of using it only as the pressure-relief valve.
+  theater_guest_mode:
+    name: Theater guest room mode
+    icon: mdi:bed-king
 
   # NOTE: sleep-mode and home-occupied booleans are intentionally NOT created
   # here - point the blueprints at your existing ones.
@@ -139,6 +164,13 @@ input_text:
     name: Server room demand
     initial: none
     icon: mdi:server
+
+  # Theater demand (guest-room mode). Written by the Coordinator itself; add it to
+  # the coordinator's demand list at the priority you want the guest room to have.
+  theater_demand:
+    name: Theater demand
+    initial: none
+    icon: mdi:bed-king
 
   # Coordinator writes a one-line summary of each decision here (diagnostic).
   zc_status:
