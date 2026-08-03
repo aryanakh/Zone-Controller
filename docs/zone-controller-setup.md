@@ -215,9 +215,9 @@ Create **one** automation from the **Coordinator** blueprint:
   - Manage the unit's setpoint: **on**
   - Force-run offset: **2** · Setpoint floor: **60** · Setpoint ceiling: **85**
   - Manual setpoint override toggle: `input_boolean.zc_setpoint_manual`
-  - Manual-edit grace: **30** (minutes)
-  - Last-commanded setpoint helper: `input_number.zc_last_cmd_setpoint`
-  - Manual-grace-until helper: `input_datetime.zc_manual_until`
+  - **Enable auto manual-edit grace: off** *(recommended — see note)*
+  - Manual-edit grace / last-commanded / grace-until helpers: only needed if you
+    turn the grace on; leave them unset otherwise.
 
 - **Theater Guest Room** *(optional — only when a guest sleeps in the theater)*:
   - Guest room mode toggle: `input_boolean.theater_guest_mode`
@@ -232,13 +232,15 @@ Create **one** automation from the **Coordinator** blueprint:
     the guest room to have (e.g. right after the master bedroom). That is what
     lets the guest room turn the unit on and take part in arbitration.
 
-> **The auto manual-edit grace is optional.** It only runs when BOTH the
-> last-commanded and manual-grace-until helpers are set. If you'd rather the
-> coordinator always manage the setpoint and never try to auto-detect hand edits
-> (relying only on the hard `zc_setpoint_manual` toggle for deliberate control),
-> just leave those two helpers unset — that removes the whole grace mechanism.
-> When it is enabled, grace is armed for at most one window per edit and then
-> self-heals, so it can't get stuck holding the thermostat.
+> **The auto manual-edit grace is OFF by default — keep it off.** It tried to
+> auto-detect a by-hand setpoint change and back off, but it proved too sensitive
+> to thermostat quirks (stepping, clamping, °C/°F rounding) and could get stuck
+> reporting "recent manual change - leaving thermostat alone." With
+> **Enable auto manual-edit grace = off** (default), force-run always manages the
+> setpoint and this can never happen. For deliberate manual control, use the hard
+> `zc_setpoint_manual` toggle instead — that never gets stuck. (Only turn the
+> grace on if you specifically want hand-edit detection and accept the risk; it
+> also needs the last-commanded and grace-until helpers set.)
 
 > **Guest room mode** turns the theater from a passive relief valve into a
 > conditioned bedroom. While the toggle is on and the theater is above its cool
