@@ -212,6 +212,31 @@ blueprint:
           default: none
           selector:
             text:
+        night_start:
+          name: Night starts at (time of day)
+          description: >
+            Used only to label the status line "Home Night" vs "Home Day". The
+            night window may cross midnight (e.g. 21:00 -> 07:00). Purely cosmetic.
+          default: "21:00:00"
+          selector:
+            time:
+        night_end:
+          name: Night ends at (time of day)
+          description: End of the night window (for the "Home Night" status label).
+          default: "07:00:00"
+          selector:
+            time:
+        night_boolean:
+          name: Night/sleep toggle (optional)
+          description: >
+            Optional input_boolean (e.g. your sleep toggle). While on, the status
+            shows "Home Night" regardless of the time window above. Status label
+            only - it does not change any conditioning behavior.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     comfort_section:
       name: Idle Behavior (no room calling)
@@ -336,12 +361,24 @@ blueprint:
             entity:
               filter:
                 - domain: input_boolean
+        enable_manual_grace:
+          name: Enable auto manual-edit grace
+          description: >
+            OFF (default) is recommended. When ON, the coordinator tries to detect
+            a by-hand setpoint change and then leaves the setpoint alone for the
+            grace period below. It needs the two helpers below AND is sensitive to
+            thermostat quirks (stepping, clamping, C/F rounding) that can make it
+            wrongly think you edited the setpoint and get "stuck" leaving the
+            thermostat alone. Leave OFF and use the hard "Manual setpoint override
+            toggle" above for deliberate manual control - that never gets stuck.
+          default: false
+          selector:
+            boolean:
         manual_grace:
           name: Manual-edit grace (minutes)
           description: >
-            If you change the setpoint by hand (with the manual toggle off), the
-            coordinator notices and leaves it alone for this many minutes before
-            resuming automatic force-run. Requires the two helpers below.
+            Only used when "Enable auto manual-edit grace" above is ON. How long to
+            leave a detected by-hand setpoint change alone before resuming force-run.
           default: 30
           selector:
             number:
@@ -480,6 +517,9 @@ variables:
   away_action: !input away_action
   away_preset: !input away_preset
   home_preset: !input home_preset
+  night_start: !input night_start
+  night_end: !input night_end
+  night_boolean: !input night_boolean
   idle_mode: !input idle_mode
   idle_high: !input idle_high
   idle_low: !input idle_low
@@ -488,6 +528,7 @@ variables:
   setpoint_floor: !input setpoint_floor
   setpoint_ceiling: !input setpoint_ceiling
   setpoint_manual: !input setpoint_manual
+  enable_manual_grace: !input enable_manual_grace
   manual_grace: !input manual_grace
   last_cmd_setpoint: !input last_cmd_setpoint
   manual_until: !input manual_until
@@ -533,6 +574,17 @@ variables:
   anyone_near: >
     {{ presence_zone is string and (states(presence_zone) | int(0) > 0) }}
   home: "{{ home_toggle or anyone_near }}"
+  # Night vs day - status label only (does not change conditioning). Night when
+  # the optional night toggle is on, or inside the night window (may cross midnight).
+  now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  has_night_window: "{{ night_start is string and night_end is string }}"
+  in_night_window: >
+    {{ false if not has_night_window
+       else (night_start <= now_hms < night_end)
+         if (night_start <= night_end)
+       else (now_hms >= night_start or now_hms < night_end) }}
+  is_night: >
+    {{ (night_boolean is string and is_state(night_boolean, 'on')) or in_night_window }}
   # --- house mode selector (optional 3-state override) ---
   hm_state: "{{ states(house_mode) if house_mode is string else '' }}"
   hm_away: "{{ house_mode is string and hm_state == house_mode_away }}"
@@ -566,11 +618,15 @@ variables:
   cap_sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   cap_sensed: "{{ cap_sensed_raw | float(0) }}"
   cap_active: >
-    {{ cap_enabled and is_number(cap_sensed_raw) and room_dir == 'none'
+    {{ cap_enabled and not want_eco and is_number(cap_sensed_raw) and room_dir == 'none'
        and (cap_sensed > idle_high
             or (main_dir == 'cool' and cap_sensed > idle_high - 0.5)) }}
   # A room's demand wins; otherwise the cap can force cooling (in "cap" mode).
   winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
+  # Eco Away holds the wide heat_cool band instead of serving rooms to their
+  # setpoints - so it never spends power cooling to ~72 while nobody is home; the
+  # house just floats within the band.
+  eco_band: "{{ want_eco }}"
   # Is the unit already holding the idle heat_cool band (so we can skip re-commanding)?
   main_ttl: "{{ state_attr(main_climate, 'target_temp_low') }}"
   main_tth: "{{ state_attr(main_climate, 'target_temp_high') }}"
@@ -603,8 +659,10 @@ variables:
   theater_open: "{{ guest_open or all_others_closed }}"
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
   # --- setpoint force-run ---
+  # No force-run while forced off or in Eco Away (the eco band holds itself via
+  # the unit's native heat_cool control - we never push it down to ~72).
   unit_should_run: >
-    {{ winner_dir in ['heat', 'cool'] and not force_off }}
+    {{ winner_dir in ['heat', 'cool'] and not force_off and not eco_band }}
   sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   sensed_valid: "{{ is_number(sensed_raw) }}"
   sensed: "{{ sensed_raw | float(0) }}"
@@ -640,11 +698,16 @@ variables:
   # rounding / C-F conversion can leave the reported target ~0.5 off what we
   # commanded, and that must never be mistaken for a manual edit (it would arm
   # the grace window every cycle and stall force-run all night).
+  # Manual-edit detection/grace is OFF unless explicitly enabled - it has proven
+  # too sensitive to thermostat quirks and would get stuck "leaving the thermostat
+  # alone". When disabled, force-run always manages the setpoint (the hard manual
+  # override toggle still gives deliberate control).
   manual_edit_detected: >
-    {{ last_cmd_valid and cur_sp_valid and main_dir in ['heat', 'cool']
+    {{ enable_manual_grace and last_cmd_valid and cur_sp_valid
+       and main_dir in ['heat', 'cool']
        and (cur_sp - (states(last_cmd_setpoint) | float(0))) | abs > 0.9 }}
   grace_active: >
-    {{ has_bookkeeping
+    {{ enable_manual_grace and has_bookkeeping
        and states(manual_until) not in ['unknown', 'unavailable', '']
        and as_timestamp(states(manual_until), 0) > as_timestamp(now()) }}
   # Manage the setpoint only when the unit should run, the feature is on, we are
@@ -657,19 +720,19 @@ variables:
   status_dir_word: "{{ 'cooling' if winner_dir == 'cool' else 'heating' }}"
   status_action: >-
     {% if force_off %}Off - forced ({{ 'vacation' if hm_vacation else 'away' }}){%
-    elif winner_dir == 'none' and idle_hold %}Idle - holding {{ idle_low }}-{{
-    idle_high }}° band{% elif winner_dir == 'none' %}Off - no room calling{%
-    elif main_dir == 'off' %}Starting {{ status_dir_word }}{% elif need_flip and
-    allow_flip %}Switching to {{ status_dir_word }}{% elif need_flip %}Waiting to
-    switch to {{ status_dir_word }} (compressor cooldown {{ mins_since_change |
-    round(0) }}/{{ min_changeover }} min){% else %}{{ 'Cooling' if main_dir ==
-    'cool' else 'Heating' }}{% endif %}
+    elif eco_band %}Holding {{ idle_low }}-{{ idle_high }}° band{% elif winner_dir
+    == 'none' and idle_hold %}Idle - holding {{ idle_low }}-{{ idle_high }}° band{%
+    elif winner_dir == 'none' %}Off - no room calling{% elif main_dir == 'off'
+    %}Starting {{ status_dir_word }}{% elif need_flip and allow_flip %}Switching to
+    {{ status_dir_word }}{% elif need_flip %}Waiting to switch to {{ status_dir_word
+    }} (compressor cooldown {{ mins_since_change | round(0) }}/{{ min_changeover }}
+    min){% else %}{{ 'Cooling' if main_dir == 'cool' else 'Heating' }}{% endif %}
   # If cooling only because the hallway is over the cap (no room asked), say so.
   status_cap: "{{ ' (hallway over ' ~ idle_high ~ '°)' if cap_active else '' }}"
-  # Plain-English house mode.
+  # Plain-English house mode (incl. Home Day vs Home Night).
   status_mode: >-
-    {% if hm_vacation %}Vacation{% elif want_eco %}Away (eco){% elif not home
-    %}Away{% else %}Home{% endif %}
+    {% if hm_vacation %}Vacation{% elif want_eco %}Eco Away{% elif not home
+    %}Away{% elif is_night %}Home Night{% else %}Home Day{% endif %}
   # Plain-English setpoint / force-run outcome (empty when it isn't managing).
   status_sp: >-
     {% if manage_setpoint and manual_hard %}manual override - thermostat left
@@ -759,6 +822,34 @@ action:
           - service: climate.turn_off
             target:
               entity_id: !input main_climate
+      # Eco Away: hold the wide heat_cool band instead of serving rooms, so we
+      # don't spend power cooling to ~72 while nobody is home - the house just
+      # floats within the band. Takes precedence over room demands and the cap.
+      - conditions:
+          - condition: template
+            value_template: "{{ eco_band }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ main_state != 'heat_cool' }}"
+                sequence:
+                  - service: climate.set_hvac_mode
+                    target:
+                      entity_id: !input main_climate
+                    data:
+                      hvac_mode: heat_cool
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not idle_band_set }}"
+                sequence:
+                  - service: climate.set_temperature
+                    target:
+                      entity_id: !input main_climate
+                    data:
+                      target_temp_low: "{{ idle_low }}"
+                      target_temp_high: "{{ idle_high }}"
       # No room is calling -> idle behavior. Hold a heat_cool safety band, or
       # (off / cap modes) switch the unit off.
       - conditions:

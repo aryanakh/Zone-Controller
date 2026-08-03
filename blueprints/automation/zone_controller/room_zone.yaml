@@ -244,19 +244,51 @@ blueprint:
         priority_demand:
           name: Yield to this higher-priority room's demand helper
           description: >
-            Optional. Point this at a higher-priority room's demand helper (e.g.
-            the nursery's). While that room is actively being served (it is calling
-            AND the unit is delivering its direction), THIS room CLOSES its damper
-            so airflow is concentrated on the priority room, then reopens when the
-            priority room is satisfied. This room still publishes its own demand
-            (so the unit keeps running for it) - only its damper yields.
-            Leave unset for normal behavior. Do NOT set this on a must-run room
-            (e.g. a server room) that should never stop getting air.
+            Optional. Point this at a higher-priority room's demand helper. While
+            that room is actively being served (it is calling AND the unit is
+            delivering its direction), THIS room CLOSES its damper so airflow is
+            concentrated on the priority room, then reopens when it stops calling.
+            This room still publishes its own demand (so the unit keeps running for
+            it) - only its damper yields. Leave unset for normal behavior. Do NOT
+            set it on a must-run room (e.g. a server room).
+            TIP: to yield ONLY when the priority room is in an extreme state (e.g.
+            a nursery far above target), point this at that room's URGENT-demand
+            helper (below) instead of its normal demand helper - then this room
+            yields only while the priority room is urgent and reopens as soon as it
+            recovers to within its urgent margin, while both keep calling.
           default: {}
           selector:
             entity:
               filter:
                 - domain: input_text
+        urgent_helper:
+          name: Urgent-demand output for THIS room (input_text, optional)
+          description: >
+            Optional. When THIS room is more than "Urgent margin" past its
+            setpoint, its demand direction (heat/cool) is published here; otherwise
+            'none'. A lower-priority room can point its "Yield to..." at this helper
+            so it only yields to this room in extreme cases. Set this on the
+            high-priority room (e.g. the nursery), not on the room that yields.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+        urgent_margin:
+          name: Urgent margin (deg)
+          description: >
+            How many degrees past the setpoint counts as "urgent" for the
+            urgent-demand output. Example: setpoint 70, margin 2 -> urgent while
+            cooling and the room is above 72; it clears (with hysteresis) as the
+            room recovers toward 72.
+          default: 2.0
+          selector:
+            number:
+              min: 0.0
+              max: 15.0
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
 
 mode: restart
 max_exceeded: silent
@@ -279,6 +311,8 @@ variables:
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
   priority_demand: !input priority_demand
+  urgent_helper: !input urgent_helper
+  urgent_margin: !input urgent_margin
   # --- derived state ---
   temp_raw: "{{ states(room_temp_sensor) }}"
   temp_valid: "{{ is_number(temp_raw) }}"
@@ -342,6 +376,24 @@ variables:
     {{ 'cool' if (active and raw_want_cool)
        else 'heat' if (active and raw_want_heat)
        else 'none' }}
+  # Urgent demand: this room's direction, but only while it is MORE than
+  # urgent_margin past its setpoint (engage), holding until it recovers to within
+  # urgent_margin - hysteresis (release). Published for lower-priority rooms to
+  # yield to only in extreme cases.
+  was_urgent_cool: "{{ urgent_helper is string and is_state(urgent_helper, 'cool') }}"
+  was_urgent_heat: "{{ urgent_helper is string and is_state(urgent_helper, 'heat') }}"
+  urgent_want_cool: >
+    {{ enable_cool and temp_valid and cool_sp_valid and (
+         temp > (cool_sp + urgent_margin)
+         or (was_urgent_cool and temp > (cool_sp + urgent_margin - hysteresis)) ) }}
+  urgent_want_heat: >
+    {{ enable_heat and temp_valid and has_heat_sp and (
+         temp < (heat_sp - urgent_margin)
+         or (was_urgent_heat and temp < (heat_sp - urgent_margin + hysteresis)) ) }}
+  urgent_demand: >
+    {{ 'cool' if (active and urgent_want_cool)
+       else 'heat' if (active and urgent_want_heat)
+       else 'none' }}
   # Priority yield: is a higher-priority room actively being served right now
   # (it is calling AND the unit is delivering its direction)? If so, this room
   # closes its damper to concentrate airflow on the priority room. This only ever
@@ -387,6 +439,19 @@ action:
       entity_id: !input demand_helper
     data:
       value: "{{ raw_demand }}"
+
+  # Publish the urgent demand (only when a helper is configured and it changed),
+  # so lower-priority rooms can yield to this one only in extreme cases.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ urgent_helper is string and states(urgent_helper) != urgent_demand }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input urgent_helper
+            data:
+              value: "{{ urgent_demand }}"
 
   # Drive the damper. OPEN => switch OFF, CLOSED => switch ON (inverted).
   - choose:

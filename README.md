@@ -106,8 +106,9 @@ Runs once for the whole house. It:
   duct from over-pressurizing — or, with **guest-room mode** on, conditions the
   theater like a bedroom (own sensor + setpoints + sleep target) and opens its
   damper to serve it, still falling back to relief when the guest isn't calling;
-- handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone), defaulting
-  to an eco preset so an always-on room keeps running while the house is empty;
+- handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone); when away
+  it applies the eco preset and holds the wide `heat_cool` band (default 64–76)
+  instead of cooling to setpoint, so it doesn't waste power while nobody's home;
 - honours an optional **house-mode selector** — `Away` forces the eco preset,
   `Vacation` turns the unit off;
 - applies a configurable **idle backstop** when no room is calling — off, a
@@ -227,8 +228,10 @@ Full step-by-step field values and a verification checklist are in
   passive relief valve into a conditioned bedroom (its own sensor + setpoints,
   with a sleep target), while it still falls back to relief when not in use.
 - **Priority yield** — a room can be told to close its damper while a
-  higher-priority room (e.g. the nursery) is being served, concentrating all the
-  airflow on that room, then reopen once it's satisfied.
+  higher-priority room is being served, concentrating all the airflow on that
+  room, then reopen. It can be scoped to *urgent* cases only (via that room's
+  urgent-demand output) so a room yields just when, say, the nursery is far past
+  its target, and both share again once it recovers.
 - **Status output** — the coordinator writes a one-line summary of every decision
   to an optional `input_text` (e.g. `Starting cooling - set thermostat to 72° -
   Home`), updated only when the decision changes, so you can see at a glance what
