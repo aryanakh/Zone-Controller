@@ -212,6 +212,31 @@ blueprint:
           default: none
           selector:
             text:
+        night_start:
+          name: Night starts at (time of day)
+          description: >
+            Used only to label the status line "Home Night" vs "Home Day". The
+            night window may cross midnight (e.g. 21:00 -> 07:00). Purely cosmetic.
+          default: "21:00:00"
+          selector:
+            time:
+        night_end:
+          name: Night ends at (time of day)
+          description: End of the night window (for the "Home Night" status label).
+          default: "07:00:00"
+          selector:
+            time:
+        night_boolean:
+          name: Night/sleep toggle (optional)
+          description: >
+            Optional input_boolean (e.g. your sleep toggle). While on, the status
+            shows "Home Night" regardless of the time window above. Status label
+            only - it does not change any conditioning behavior.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     comfort_section:
       name: Idle Behavior (no room calling)
@@ -480,6 +505,9 @@ variables:
   away_action: !input away_action
   away_preset: !input away_preset
   home_preset: !input home_preset
+  night_start: !input night_start
+  night_end: !input night_end
+  night_boolean: !input night_boolean
   idle_mode: !input idle_mode
   idle_high: !input idle_high
   idle_low: !input idle_low
@@ -533,6 +561,17 @@ variables:
   anyone_near: >
     {{ presence_zone is string and (states(presence_zone) | int(0) > 0) }}
   home: "{{ home_toggle or anyone_near }}"
+  # Night vs day - status label only (does not change conditioning). Night when
+  # the optional night toggle is on, or inside the night window (may cross midnight).
+  now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  has_night_window: "{{ night_start is string and night_end is string }}"
+  in_night_window: >
+    {{ false if not has_night_window
+       else (night_start <= now_hms < night_end)
+         if (night_start <= night_end)
+       else (now_hms >= night_start or now_hms < night_end) }}
+  is_night: >
+    {{ (night_boolean is string and is_state(night_boolean, 'on')) or in_night_window }}
   # --- house mode selector (optional 3-state override) ---
   hm_state: "{{ states(house_mode) if house_mode is string else '' }}"
   hm_away: "{{ house_mode is string and hm_state == house_mode_away }}"
@@ -666,10 +705,10 @@ variables:
     'cool' else 'Heating' }}{% endif %}
   # If cooling only because the hallway is over the cap (no room asked), say so.
   status_cap: "{{ ' (hallway over ' ~ idle_high ~ '°)' if cap_active else '' }}"
-  # Plain-English house mode.
+  # Plain-English house mode (incl. Home Day vs Home Night).
   status_mode: >-
-    {% if hm_vacation %}Vacation{% elif want_eco %}Away (eco){% elif not home
-    %}Away{% else %}Home{% endif %}
+    {% if hm_vacation %}Vacation{% elif want_eco %}Eco Away{% elif not home
+    %}Away{% elif is_night %}Home Night{% else %}Home Day{% endif %}
   # Plain-English setpoint / force-run outcome (empty when it isn't managing).
   status_sp: >-
     {% if manage_setpoint and manual_hard %}manual override - thermostat left

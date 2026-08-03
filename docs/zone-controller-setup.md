@@ -173,6 +173,10 @@ Create **one** automation from the **Coordinator** blueprint:
   stays cooled while the house is empty)*
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
+- Night starts / ends at: **21:00:00** / **07:00:00** *(label-only — drives the
+  `Home Night` vs `Home Day` status; the window may cross midnight)*
+- Night/sleep toggle *(optional)*: `input_boolean.<your_sleep_mode>` — while on,
+  the status shows `Home Night` regardless of the clock. Changes no conditioning.
 - **Idle Behavior** (what to do when no room is calling):
   - Idle behavior: **Hold a heat_cool safety band** — keeps the unit in
     `heat_cool` on the band below, so the whole house stays between the limits
@@ -357,15 +361,24 @@ The **thermostat action** part only appears when Setpoint Force-Run is enabled.
 - `recent manual change - leaving thermostat alone` — inside the manual-edit grace window.
 - `manual override - thermostat left alone` — the hard manual override toggle is on.
 
-**House mode:** `Home`, `Away`, `Away (eco)`, or `Vacation`.
+**House mode:**
+- `Home Day` — home, outside the night window.
+- `Home Night` — home, inside the night window (or the night/sleep toggle is on).
+- `Eco Away` — nobody home and the away action is the eco preset.
+- `Away` — nobody home (away action is "do nothing" or "turn off").
+- `Vacation` — house-mode selector set to Vacation.
+
+The Day/Night split comes from the coordinator's **Night starts/ends at** times
+(default 21:00 → 07:00) plus the optional **Night/sleep toggle** — both are
+label-only and change no conditioning.
 
 Examples:
 
 ```
-Starting cooling - set thermostat to 72° - Home
-Cooling - thermostat already at 72° - Home
-Waiting to switch to heating (compressor cooldown 1/3 min) - Home
-Idle - holding 64-76° band - Home
+Starting cooling - set thermostat to 72° - Home Day
+Cooling - thermostat already at 72° - Home Night
+Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day
+Idle - holding 64-76° band - Home Night
 Off - forced (vacation) - Vacation
 ```
 
