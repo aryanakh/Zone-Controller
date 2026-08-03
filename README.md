@@ -226,6 +226,9 @@ Full step-by-step field values and a verification checklist are in
 - **Theater guest-room mode** — a toggle turns the theater/bonus room from a
   passive relief valve into a conditioned bedroom (its own sensor + setpoints,
   with a sleep target), while it still falls back to relief when not in use.
+- **Priority yield** — a room can be told to close its damper while a
+  higher-priority room (e.g. the nursery) is being served, concentrating all the
+  airflow on that room, then reopen once it's satisfied.
 - **Status output** — the coordinator writes a one-line summary of every decision
   to an optional `input_text` (e.g. `Starting cooling - set thermostat to 72° -
   Home`), updated only when the decision changes, so you can see at a glance what

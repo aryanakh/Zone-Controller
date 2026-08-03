@@ -104,6 +104,11 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Main HVAC climate entity: `climate.upstairs_hvac`
 - Cool setpoint: `input_number.master_cool_sp` · Enable cooling: **on**
 - Heat setpoint: *(leave unset)* · Enable heating: **off**
+- **Priority Yield** *(optional)*: *"Yield to this higher-priority room's demand
+  helper"* → `input_text.nursery_demand`. While the nursery is actively being
+  served, the master closes its damper so all the air goes to the nursery, then
+  reopens when the nursery is satisfied. Leave it unset if you'd rather the master
+  stay open (getting cooling and acting as a release path) alongside the nursery.
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.<your_sleep_mode>`
 - Sleep / pre-cool cool setpoint: `input_number.master_sleep_cool_sp`
@@ -129,6 +134,10 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Cool setpoint: `input_number.server_cool_sp` · Enable cooling: **on**
 - Heat setpoint: *(leave unset)* · Enable heating: **off**
 - Zone mode: **Always on**
+- **Priority Yield:** *leave unset.* The server must never stop getting air, so it
+  should not yield to the nursery (or any room). When other rooms yield to the
+  nursery and only the nursery is open, the theater relief valve provides the
+  pressure path — the server does not need to.
 
 > The theater / bonus room does **not** get a Room Zone automation — its damper
 > is managed only by the coordinator.
@@ -257,6 +266,12 @@ satisfied. The target is clamped between the floor and ceiling.
    nursery; the master's dampers stay **on** (closed) until the nursery is
    satisfied. Priority is never yielded to the lower-priority master — the only
    thing that can briefly delay the switch to heat is the compressor cooldown.
+   - **Priority yield.** With the master's *Priority Yield* pointed at
+     `input_text.nursery_demand`: make both call for cooling. While the nursery is
+     being served, the master's dampers go **on** (closed) so airflow focuses on
+     the nursery, and the theater relief valve opens. Satisfy the nursery
+     (`nursery_demand` → `none`) and the master's dampers reopen (within the room
+     resync, ~5 min).
 4. **Compressor reversal cooldown.** Watch `input_datetime.zc_last_changeover` —
    after a direction change, the unit won't reverse heat↔cool again until
    `min_changeover` minutes pass (unless no room is still calling the current
