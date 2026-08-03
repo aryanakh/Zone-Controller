@@ -355,10 +355,13 @@ changes** (not every cycle), so use the entity's *last changed* time to see when
 the coordinator last acted. Format:
 
 ```
-<what the unit is doing> - <thermostat action> - <house mode>
+<what the unit is doing> - <thermostat action> - <house mode>[ - cooling: ...][ - heating: ...]
 ```
 
 The **thermostat action** part only appears when Setpoint Force-Run is enabled.
+The **cooling:/heating:** lists name the rooms currently calling in each
+direction (from the demand helpers' friendly names, minus the " demand" suffix);
+each is shown only when at least one room is calling that way.
 
 **What the unit is doing:**
 - `Starting cooling` / `Starting heating` — unit was off (or idling) and a room called.
@@ -396,9 +399,9 @@ label-only and change no conditioning.
 Examples:
 
 ```
-Starting cooling - set thermostat to 72° - Home Day
-Cooling - thermostat already at 72° - Home Night
-Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day
+Starting cooling - set thermostat to 72° - Home Day - cooling: Nursery
+Cooling - thermostat already at 72° - Home Night - cooling: Nursery, Master bedroom
+Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day - heating: Nursery - cooling: Master bedroom
 Idle - holding 64-76° band - Home Night
 Holding 64-76° band - Eco Away
 Off - forced (vacation) - Vacation

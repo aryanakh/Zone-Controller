@@ -742,12 +742,18 @@ variables:
     ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs > 0.5)) %}set thermostat
     to {{ desired_sp }}°{% elif manage_now %}thermostat already at {{ desired_sp
     }}°{% endif %}
+  # Which rooms are currently calling, by direction (friendly names of the demand
+  # helpers with the trailing " demand" stripped).
+  status_cooling_rooms: "{{ (zone_demands | select('is_state', 'cool') | map('state_attr', 'friendly_name') | select('string') | list | join(', ')) | replace(' demand', '') | replace(' Demand', '') }}"
+  status_heating_rooms: "{{ (zone_demands | select('is_state', 'heat') | map('state_attr', 'friendly_name') | select('string') | list | join(', ')) | replace(' demand', '') | replace(' Demand', '') }}"
   # No timestamp in the value - HA tracks last_changed for free, and a timestamp
   # would make the helper rewrite every run. The write below is skipped when the
   # message is unchanged, so it only updates when the decision actually changes.
   status_msg: >-
     {{ status_action }}{{ status_cap }}{% if status_sp | trim %} - {{ status_sp |
-    trim }}{% endif %} - {{ status_mode }}
+    trim }}{% endif %} - {{ status_mode }}{% if status_cooling_rooms %} - cooling:
+    {{ status_cooling_rooms }}{% endif %}{% if status_heating_rooms %} - heating:
+    {{ status_heating_rooms }}{% endif %}
 
 trigger:
   - platform: state
