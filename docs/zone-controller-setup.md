@@ -95,6 +95,11 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Heat setpoint: `input_number.nursery_heat_sp` · Enable heating: **on**
 - Hysteresis: **0.3** (half-band on each side → the room settles within ~0.6° of
   the setpoint) · Zone mode: **Standard**
+- **Priority Yield** section → *Urgent-demand output*: `input_text.nursery_urgent`
+  · *Urgent margin*: **2** — the nursery publishes `cool`/`heat` here only while
+  it's more than 2° past its setpoint, so lower-priority rooms yield to it **only
+  in extreme cases** (e.g. 75° when it needs 70°) and stop once it recovers to
+  ~72°. (Leave its own "Yield to..." unset — the nursery never yields.)
 
 ### Master bedroom (priority 2 — occupancy, cool-only, sleep, 2 dampers)
 - Room enable toggle: `input_boolean.master_enabled`
@@ -105,10 +110,12 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - Cool setpoint: `input_number.master_cool_sp` · Enable cooling: **on**
 - Heat setpoint: *(leave unset)* · Enable heating: **off**
 - **Priority Yield** *(optional)*: *"Yield to this higher-priority room's demand
-  helper"* → `input_text.nursery_demand`. While the nursery is actively being
-  served, the master closes its damper so all the air goes to the nursery, then
-  reopens when the nursery is satisfied. Leave it unset if you'd rather the master
-  stay open (getting cooling and acting as a release path) alongside the nursery.
+  helper"* → `input_text.nursery_urgent`. The master then closes its damper only
+  while the nursery is **urgent** (far past its target), concentrating air on the
+  nursery until it recovers to ~72°, then reopens — while both keep calling. (Point
+  it at `input_text.nursery_demand` instead if you want the master to yield
+  *whenever* the nursery is served, not just in extreme cases; leave unset for no
+  yielding at all.)
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.<your_sleep_mode>`
 - Sleep / pre-cool cool setpoint: `input_number.master_sleep_cool_sp`
@@ -169,10 +176,17 @@ Create **one** automation from the **Coordinator** blueprint:
     *(match your selector's exact option labels)*
 - Home occupied toggle: `input_boolean.<your_home_occupied>`
 - Wide presence zone: `zone.home_wide`
-- Away action: **Set eco preset** *(keeps the unit running so the server room
-  stays cooled while the house is empty)*
+- Away action: **Set eco preset**
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
+
+> **Eco Away holds the wide band, it doesn't cool to setpoint.** When nobody is
+> home with the eco action (or the house-mode selector is **Away**), the unit is
+> held in the `heat_cool` idle band (default **64–76**) and force-run is
+> suspended — so it never spends power cooling the house to ~72 while you're out;
+> the whole house just floats between the band limits, including the server room
+> (which floats up to 76 rather than its normal setpoint). Use **Vacation** if you
+> want it fully off instead.
 - Night starts / ends at: **21:00:00** / **07:00:00** *(label-only — drives the
   `Home Night` vs `Home Day` status; the window may cross midnight)*
 - Night/sleep toggle *(optional)*: `input_boolean.<your_sleep_mode>` — while on,
@@ -270,12 +284,12 @@ satisfied. The target is clamped between the floor and ceiling.
    nursery; the master's dampers stay **on** (closed) until the nursery is
    satisfied. Priority is never yielded to the lower-priority master — the only
    thing that can briefly delay the switch to heat is the compressor cooldown.
-   - **Priority yield.** With the master's *Priority Yield* pointed at
-     `input_text.nursery_demand`: make both call for cooling. While the nursery is
-     being served, the master's dampers go **on** (closed) so airflow focuses on
-     the nursery, and the theater relief valve opens. Satisfy the nursery
-     (`nursery_demand` → `none`) and the master's dampers reopen (within the room
-     resync, ~5 min).
+   - **Priority yield (extreme only).** With the master's *Priority Yield* pointed
+     at `input_text.nursery_urgent`: push the nursery **more than 2° past** its
+     cool setpoint. `nursery_urgent` → `cool`, and while the nursery is served the
+     master's dampers go **on** (closed) so airflow focuses on the nursery. As the
+     nursery recovers to within ~2° (`nursery_urgent` → `none`), the master's
+     dampers reopen and both share — even though the nursery is still cooling.
 4. **Compressor reversal cooldown.** Watch `input_datetime.zc_last_changeover` —
    after a direction change, the unit won't reverse heat↔cool again until
    `min_changeover` minutes pass (unless no room is still calling the current
@@ -296,7 +310,10 @@ satisfied. The target is clamped between the floor and ceiling.
    automatically inside the 20:00–07:00 window (house occupied) without touching
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
-   `zone.home_wide`; the configured away action fires (eco preset by default).
+   `zone.home_wide` (or set the house-mode selector to Away). The eco preset is
+   applied and the unit holds the `heat_cool` **64–76** band — it should **not**
+   force-run the setpoint down to ~72. The status shows `Holding 64-76° band -
+   Eco Away`. It only cools if the house rises past 76.
 9. **Idle band.** With every room satisfied (nobody calling) and idle behavior
    set to **hold band**, the unit should sit in `heat_cool` on the 64–76 band
    (`Idle - holding 64-76° band` in the status line) — cooling if the house
@@ -349,6 +366,8 @@ The **thermostat action** part only appears when Setpoint Force-Run is enabled.
   wanted but the compressor cooldown is blocking it (1 of 3 min elapsed).
 - `Off - no room calling` — nothing is calling and idle behavior is "off".
 - `Idle - holding 64-76° band` — nothing is calling and idle behavior is "hold band".
+- `Holding 64-76° band` (with mode `Eco Away`) — nobody home: holding the wide
+  band instead of cooling to setpoint, to save power.
 - `Off - forced (vacation)` / `Off - forced (away)` — house mode Vacation, or
   away with the turn-off action.
 - `... (hallway over 76°)` — cooling only because the hallway passed the cap (no
@@ -379,6 +398,7 @@ Starting cooling - set thermostat to 72° - Home Day
 Cooling - thermostat already at 72° - Home Night
 Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day
 Idle - holding 64-76° band - Home Night
+Holding 64-76° band - Eco Away
 Off - forced (vacation) - Vacation
 ```
 

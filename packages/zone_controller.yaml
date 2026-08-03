@@ -165,6 +165,13 @@ input_text:
     initial: none
     icon: mdi:server
 
+  # Nursery "urgent" demand - set when the nursery is far past its setpoint. Point
+  # the master's Priority Yield at this so it only yields in extreme cases.
+  nursery_urgent:
+    name: Nursery urgent demand
+    initial: none
+    icon: mdi:baby-carriage-off
+
   # Theater demand (guest-room mode). Written by the Coordinator itself; add it to
   # the coordinator's demand list at the priority you want the guest room to have.
   theater_demand:
