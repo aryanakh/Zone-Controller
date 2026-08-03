@@ -236,6 +236,28 @@ blueprint:
               filter:
                 - domain: input_boolean
 
+    priority_section:
+      name: Priority Yield (optional)
+      icon: mdi:priority-high
+      collapsed: true
+      input:
+        priority_demand:
+          name: Yield to this higher-priority room's demand helper
+          description: >
+            Optional. Point this at a higher-priority room's demand helper (e.g.
+            the nursery's). While that room is actively being served (it is calling
+            AND the unit is delivering its direction), THIS room CLOSES its damper
+            so airflow is concentrated on the priority room, then reopens when the
+            priority room is satisfied. This room still publishes its own demand
+            (so the unit keeps running for it) - only its damper yields.
+            Leave unset for normal behavior. Do NOT set this on a must-run room
+            (e.g. a server room) that should never stop getting air.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+
 mode: restart
 max_exceeded: silent
 
@@ -256,6 +278,7 @@ variables:
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
+  priority_demand: !input priority_demand
   # --- derived state ---
   temp_raw: "{{ states(room_temp_sensor) }}"
   temp_valid: "{{ is_number(temp_raw) }}"
@@ -284,9 +307,13 @@ variables:
     {{ sleep_cool_setpoint is string and (
          (sleep_boolean is string and is_state(sleep_boolean, 'on'))
          or schedule_active ) }}
-  cool_sp: >
-    {{ (states(sleep_cool_setpoint) | float(0)) if use_night_sp
-       else (states(cool_setpoint) | float(0)) }}
+  # The active cool-setpoint entity (sleep/pre-cool target when applicable).
+  cool_sp_src: "{{ sleep_cool_setpoint if use_night_sp else cool_setpoint }}"
+  # WATCHDOG: only trust the cool setpoint when it is a real number. If the helper
+  # is unavailable/unknown, do NOT fall back to 0 (that would make every reading
+  # look "too hot" and demand cooling forever, even far below the real setpoint).
+  cool_sp_valid: "{{ is_number(states(cool_sp_src)) }}"
+  cool_sp: "{{ states(cool_sp_src) | float(0) }}"
   has_heat_sp: "{{ heat_setpoint is string and is_number(states(heat_setpoint)) }}"
   heat_sp: "{{ states(heat_setpoint) | float(0) if has_heat_sp else 0 }}"
   # Is this room allowed to run right now (mode gate)?
@@ -304,7 +331,7 @@ variables:
   was_cool: "{{ is_state(demand_helper, 'cool') }}"
   was_heat: "{{ is_state(demand_helper, 'heat') }}"
   raw_want_cool: >
-    {{ enable_cool and temp_valid and (
+    {{ enable_cool and temp_valid and cool_sp_valid and (
          temp > (cool_sp + hysteresis)
          or (was_cool and temp > (cool_sp - hysteresis)) ) }}
   raw_want_heat: >
@@ -315,9 +342,19 @@ variables:
     {{ 'cool' if (active and raw_want_cool)
        else 'heat' if (active and raw_want_heat)
        else 'none' }}
-  # Open only when the room's demand matches the direction the unit delivers.
+  # Priority yield: is a higher-priority room actively being served right now
+  # (it is calling AND the unit is delivering its direction)? If so, this room
+  # closes its damper to concentrate airflow on the priority room. This only ever
+  # fires while the priority room is actually getting air, so we never yield
+  # during a compressor cooldown while the unit is still serving THIS room.
+  priority_dir: "{{ states(priority_demand) if priority_demand is string else 'none' }}"
+  priority_served: >
+    {{ (priority_dir == 'cool' and main_mode in ['cool', 'heat_cool'])
+       or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool']) }}
+  # Open only when the room's demand matches the direction the unit delivers AND
+  # no higher-priority room is currently being served (see priority yield above).
   should_open: >
-    {{ active and (
+    {{ active and not priority_served and (
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
          (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
        ) }}
@@ -341,11 +378,10 @@ trigger:
 condition: []
 
 action:
-  # Hold on an invalid/missing temperature reading - don't publish or move.
-  - condition: template
-    value_template: "{{ temp_valid }}"
-
-  # Publish this room's raw demand for the Coordinator (no-op if unchanged).
+  # WATCHDOG: always publish (no early abort). On an invalid/missing temperature
+  # raw_demand computes to 'none' (the want_* checks require a valid temp), so a
+  # dead or unavailable sensor fails SAFE to 'none' and closes the damper instead
+  # of freezing the last demand (e.g. a stale 'cool') and cooling a room forever.
   - service: input_text.set_value
     target:
       entity_id: !input demand_helper
