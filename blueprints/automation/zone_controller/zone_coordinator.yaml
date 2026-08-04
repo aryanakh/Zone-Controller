@@ -737,11 +737,10 @@ variables:
   status_sp: >-
     {% if manage_setpoint and manual_hard %}manual override - thermostat left
     alone{% elif manage_now and grace_active %}recent manual change - leaving
-    thermostat alone{% elif manage_now and manual_edit_detected and has_bookkeeping
-    %}you changed the thermostat - keeping your value{% elif manage_now and
-    ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs > 0.5)) %}set thermostat
-    to {{ desired_sp }}°{% elif manage_now %}thermostat already at {{ desired_sp
-    }}°{% endif %}
+    thermostat alone{% elif manage_now %}thermostat forced to {{ desired_sp }}°
+    (hallway is {{ sensed | round(1) }}°, pushed {{ 'below' if winner_dir == 'cool'
+    else 'above' }} it so the unit keeps running - this is a lever, not the room
+    target){% endif %}
   # Which rooms are currently calling, by direction (friendly names of the demand
   # helpers with the trailing " demand" stripped).
   status_cooling_rooms: "{{ (zone_demands | select('is_state', 'cool') | map('state_attr', 'friendly_name') | select('string') | list | join(', ')) | replace(' demand', '') | replace(' Demand', '') }}"

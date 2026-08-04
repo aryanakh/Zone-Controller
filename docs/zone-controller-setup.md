@@ -379,11 +379,17 @@ each is shown only when at least one room is calling that way.
   room asked), e.g. `Starting cooling (hallway over 76°)`.
 
 **Thermostat action** (force-run):
-- `set thermostat to 72°` — pushed the target so the unit actually runs.
-- `thermostat already at 72°` — target was already right, left it.
-- `you changed the thermostat - keeping your value` — you edited it by hand; honoring it.
-- `recent manual change - leaving thermostat alone` — inside the manual-edit grace window.
+- `thermostat forced to 67° (hallway is 72°, pushed below it so the unit keeps
+  running - this is a lever, not the room target)` — the central thermostat
+  senses the **hallway**, so to make the unit run for a room the coordinator
+  pushes the setpoint **below** the hallway (for cooling) or **above** it (for
+  heating). The number is a *control lever*, **not** the temperature any room is
+  aimed at — each room is served by its damper opening/closing. So "67° while the
+  hallway reads 72°" just means "keep cooling"; it does **not** mean the house is
+  being cooled to 67.
 - `manual override - thermostat left alone` — the hard manual override toggle is on.
+- `recent manual change - leaving thermostat alone` — only if you enabled the
+  (off-by-default) auto manual-edit grace.
 
 **House mode:**
 - `Home Day` — home, outside the night window.
@@ -399,8 +405,7 @@ label-only and change no conditioning.
 Examples:
 
 ```
-Starting cooling - set thermostat to 72° - Home Day - cooling: Nursery
-Cooling - thermostat already at 72° - Home Night - cooling: Nursery, Master bedroom
+Cooling - thermostat forced to 67° (hallway is 72°, pushed below it so the unit keeps running - this is a lever, not the room target) - Home Day - cooling: Master bedroom
 Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day - heating: Nursery - cooling: Master bedroom
 Idle - holding 64-76° band - Home Night
 Holding 64-76° band - Eco Away
