@@ -179,6 +179,20 @@ input_text:
     initial: none
     icon: mdi:bed-king
 
+  # Per-room plain-English status (why each room is / isn't calling). Diagnostic.
+  nursery_status:
+    name: Nursery status
+    max: 255
+    icon: mdi:baby-carriage
+  master_status:
+    name: Master bedroom status
+    max: 255
+    icon: mdi:bed
+  server_status:
+    name: Server room status
+    max: 255
+    icon: mdi:server
+
   # Coordinator writes a one-line summary of each decision here (diagnostic).
   zc_status:
     name: Zone controller status

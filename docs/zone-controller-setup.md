@@ -62,7 +62,8 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
   `master_enabled`, `theater_guest_mode`
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
-  `theater_demand`
+  `theater_demand`; per-room status: `nursery_status`, `master_status`,
+  `server_status`
 - `input_datetime.zc_last_changeover`
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
@@ -85,9 +86,16 @@ both (or copy into `<config>/blueprints/automation/zone_controller/`):
 
 Create **one automation per conditioned room** from the **Room Zone** blueprint.
 
+Each room also has an optional **Room status output** (`input_text`) it writes a
+plain-English explanation to — its temperature vs its effective target, day/sleep,
+whether it's yielding or disabled — so you can see *why* each room is or isn't
+calling. Point each room at its own (`nursery_status`, `master_status`,
+`server_status`).
+
 ### Nursery (priority 1 — standard, tight band)
 - Room enable toggle: `input_boolean.nursery_enabled`
 - Demand helper: `input_text.nursery_demand`
+- Room status output: `input_text.nursery_status`
 - Room temperature sensor: `sensor.nursery_temperature`
 - Damper switch(es): `switch.damper_nursery`
 - Main HVAC climate entity: `climate.upstairs_hvac`
@@ -104,6 +112,7 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 ### Master bedroom (priority 2 — occupancy, cool-only, sleep, 2 dampers)
 - Room enable toggle: `input_boolean.master_enabled`
 - Demand helper: `input_text.master_demand`
+- Room status output: `input_text.master_status`
 - Room temperature sensor: `sensor.master_bedroom_temperature`
 - Damper switch(es): `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`
 - Main HVAC climate entity: `climate.upstairs_hvac`
@@ -135,6 +144,7 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 ### Server room (priority 3 — always on, cool-only)
 - Room enable toggle: `input_boolean.server_enabled`
 - Demand helper: `input_text.server_demand`
+- Room status output: `input_text.server_status`
 - Room temperature sensor: `sensor.server_room_temperature`
 - Damper switch(es): `switch.damper_server_room`
 - Main HVAC climate entity: `climate.upstairs_hvac`
@@ -416,6 +426,28 @@ If the status line **never updates**, the coordinator automation itself isn't
 running — check that it's enabled and look at its trace. If it shows
 `Off - no room calling` while a room is hot, that room isn't publishing demand
 (check its demand `input_text` and temp sensor).
+
+### Reading a room's status
+
+Each Room Zone can also write a plain-English line to its own status helper
+explaining **why it is or isn't calling** — its temperature vs its *effective*
+target, whether it's on day or sleep setpoints, and whether it's yielding or
+disabled. Examples:
+
+```
+Cooling - 76.4° vs 75.0° target (day)                 ← above the 75° day target, so it's calling
+Cooling - 68.5° vs 68.0° target (sleep)               ← on the sleep setpoint (why it cools a ~68° room)
+Idle - 71.0° (cool above 72.0°, heat below 68.0°)     ← comfortable, not calling
+Heating - 66.5° vs 68.0° target
+Cooling (yielding to priority) - 76.0° vs 75.0° target (day)  ← damper closed to focus air on the nursery
+Idle - 73.0° (not eligible: occupancy/schedule)       ← gated off by occupancy or its window
+Off (disabled)                                        ← enable toggle is off
+No temperature reading                                ← sensor unavailable (fails safe to idle)
+```
+
+This is the companion to the coordinator line: the coordinator explains what the
+*unit* is doing; each room status explains what that *room* wants and why. The
+`(sleep)` / `(day)` tag is the quickest way to catch a stuck sleep toggle.
 
 ## Notes & limitations
 

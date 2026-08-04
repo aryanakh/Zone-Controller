@@ -118,9 +118,9 @@ Runs once for the whole house. It:
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints plus theater guest-room
 setpoints (`input_number`), per-room enable toggles and the theater guest-room
-toggle (`input_boolean`), per-room/theater demand helpers plus the coordinator
-status line (`input_text`), the changeover timestamp (`input_datetime`), and the
-wide presence `zone`. It does
+toggle (`input_boolean`), per-room/theater demand helpers, per-room status lines,
+and the coordinator status line (`input_text`), the changeover timestamp
+(`input_datetime`), and the wide presence `zone`. It does
 **not** create the sleep-mode or home-occupied booleans — point the blueprints at
 your existing ones.
 

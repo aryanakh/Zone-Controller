@@ -55,6 +55,18 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        status_helper:
+          name: Room status output (input_text, optional)
+          description: >
+            Optional input_text this room writes a plain-English explanation of
+            what it is doing and why to (its temperature vs its effective target,
+            day/sleep, whether it's yielding or disabled). Purely diagnostic; add
+            it to a dashboard to see why each room is or isn't calling.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_text
 
     sensors_section:
       name: Sensors & Entities
@@ -296,6 +308,7 @@ max_exceeded: silent
 variables:
   enabled: !input enabled
   demand_helper: !input demand_helper
+  status_helper: !input status_helper
   zone_mode: !input zone_mode
   occupancy_sensor: !input occupancy_sensor
   room_temp_sensor: !input room_temp_sensor
@@ -410,6 +423,15 @@ variables:
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
          (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
        ) }}
+  # Plain-English explanation of what this room is doing and why (for status_helper).
+  room_status: >-
+    {%- if not enabled_on -%}Off (disabled)
+    {%- elif not temp_valid -%}No temperature reading
+    {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
+    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ 'sleep' if use_night_sp else 'day' }})
+    {%- elif raw_demand == 'heat' -%}Heating{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
+    {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}){{ ' - sleep setpoints' if use_night_sp else '' }}
+    {%- endif -%}
 
 trigger:
   - platform: state
@@ -452,6 +474,18 @@ action:
               entity_id: !input urgent_helper
             data:
               value: "{{ urgent_demand }}"
+
+  # Publish this room's plain-English status (only when set and changed).
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ status_helper is string and states(status_helper) != room_status }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "{{ room_status }}"
 
   # Drive the damper. OPEN => switch OFF, CLOSED => switch ON (inverted).
   - choose:
