@@ -67,6 +67,18 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        bypass:
+          name: Full manual override / bypass (optional)
+          description: >
+            An input_boolean. While ON, this room does NOTHING - it stops driving
+            its damper (and publishing demand), so you have full manual control of
+            the damper until you turn it off. Use the SAME toggle here and in the
+            Coordinator so the whole system stands down together.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     sensors_section:
       name: Sensors & Entities
@@ -334,6 +346,8 @@ variables:
   enabled: !input enabled
   demand_helper: !input demand_helper
   status_helper: !input status_helper
+  bypass: !input bypass
+  bypassed: "{{ bypass is string and is_state(bypass, 'on') }}"
   zone_mode: !input zone_mode
   occupancy_sensor: !input occupancy_sensor
   room_temp_sensor: !input room_temp_sensor
@@ -461,7 +475,8 @@ variables:
        ) }}
   # Plain-English explanation of what this room is doing and why (for status_helper).
   room_status: >-
-    {%- if not enabled_on -%}Off (disabled)
+    {%- if bypassed -%}Manual override ON - not controlling this damper
+    {%- elif not enabled_on -%}Off (disabled)
     {%- elif not temp_valid -%}No temperature reading
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
     {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ 'sleep' if use_night_sp else 'day' }})
@@ -488,6 +503,22 @@ trigger:
 condition: []
 
 action:
+  # Full manual override / bypass: note it in the room status, then STOP - the
+  # room stops driving its damper and publishing demand, leaving the damper under
+  # your manual control until the toggle is turned off.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ bypassed and status_helper is string and states(status_helper) != room_status }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "{{ room_status }}"
+  - condition: template
+    value_template: "{{ not bypassed }}"
+
   # WATCHDOG: always publish (no early abort). On an invalid/missing temperature
   # raw_demand computes to 'none' (the want_* checks require a valid temp), so a
   # dead or unavailable sensor fails SAFE to 'none' and closes the damper instead

@@ -139,6 +139,20 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        bypass:
+          name: Full manual override / bypass (optional)
+          description: >
+            An input_boolean. While ON, the coordinator does NOTHING - it will not
+            touch the unit's on/off, mode, setpoint, or the theater/relief damper -
+            so you have full manual control of the HVAC until you turn it off. Use
+            the SAME toggle in every Room Zone so the rooms also stop driving their
+            dampers, giving you complete manual control of the whole system.
+            (This is broader than the setpoint-only "Manual setpoint override".)
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     presence_section:
       name: Home / Away
@@ -511,6 +525,8 @@ variables:
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
   status_helper: !input status_helper
+  bypass: !input bypass
+  bypassed: "{{ bypass is string and is_state(bypass, 'on') }}"
   house_mode: !input house_mode
   house_mode_away: !input house_mode_away
   house_mode_vacation: !input house_mode_vacation
@@ -795,6 +811,25 @@ trigger:
 condition: []
 
 action:
+  # --- 0. Full manual override / bypass --------------------------------------
+  # While the bypass toggle is on, note it in the status and then STOP - the
+  # coordinator touches nothing (mode, on/off, setpoint, theater damper), leaving
+  # the whole unit under your manual control until you turn it off.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ bypassed and status_helper is string
+                 and states(status_helper) != 'Manual override ON - coordinator not controlling the unit' }}
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "Manual override ON - coordinator not controlling the unit"
+  - condition: template
+    value_template: "{{ not bypassed }}"
+
   # --- 1. Theater damper: guest supply and/or pressure relief -----------------
   # Open (switch OFF) to serve the guest room (guest mode) or as the relief valve
   # when every other damper is closed; otherwise keep it closed (switch ON).

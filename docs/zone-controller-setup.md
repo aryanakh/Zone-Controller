@@ -67,6 +67,7 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - `input_datetime.zc_last_changeover`
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
+- Full manual override: `input_boolean.zc_bypass`
 - `zone.home_wide` (~5 mi)
 
 > The **sleep-mode** and **home-occupied** booleans are **not** created by the
@@ -91,6 +92,11 @@ plain-English explanation to — its temperature vs its effective target, day/sl
 whether it's yielding or disabled — so you can see *why* each room is or isn't
 calling. Point each room at its own (`nursery_status`, `master_status`,
 `server_status`).
+
+Also set every room's **Full manual override / bypass** input to the shared
+`input_boolean.zc_bypass` (the same one the Coordinator uses). While that toggle
+is on, the room stops driving its damper so you have full manual control; off, it
+resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 
 ### Nursery (priority 1 — standard, tight band)
 - Room enable toggle: `input_boolean.nursery_enabled`
@@ -184,6 +190,8 @@ Create **one** automation from the **Coordinator** blueprint:
   `Starting cooling - set thermostat to 72° - Home`. Add it to a dashboard
   (or just watch it in Developer Tools → States) to see exactly what the
   coordinator did and why on each run. See **Reading the status line** below.
+- Full manual override / bypass *(optional)*: `input_boolean.zc_bypass` — while on,
+  the coordinator touches nothing. **Use this same helper in every Room Zone too.**
 - House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
   reads **Away** the unit is forced into the eco preset (Eco mode); when it reads
   **Vacation** the unit is turned off. Any other value falls back to the
@@ -283,13 +291,20 @@ temperature (e.g. cool → 65 °F) so it actually runs; the room dampers then do
 real regulation and the coordinator turns the unit off once every room is
 satisfied. The target is clamped between the floor and ceiling.
 
-**Keeping manual control.** Two ways to override:
-- **Hard:** turn `input_boolean.zc_setpoint_manual` **on** — the coordinator
-  never touches the setpoint until you turn it back off.
-- **Soft:** just change the setpoint by hand (toggle off). The coordinator
-  detects the manual edit and leaves it alone for the grace period (default 30
-  min) before resuming force-run. So a manual tweak is never overridden
-  immediately.
+**Keeping manual control.** Three levels, lightest to heaviest:
+- **Setpoint only** — turn `input_boolean.zc_setpoint_manual` **on**. The
+  coordinator stops touching the *setpoint* (you pick the temperature) but still
+  runs on/off, mode, and the dampers. Off = hand setpoint control back.
+- **Full manual override / bypass** — turn `input_boolean.zc_bypass` **on**. The
+  coordinator **and every room stand down completely**: no on/off, no mode, no
+  setpoint, no damper moves. You have total manual control of the thermostat and
+  all dampers until you turn it off, at which point automation resumes (within
+  the ~2 min re-sync). **Point every Room Zone's *Full manual override* input and
+  the Coordinator's at this same `zc_bypass` toggle.** The status lines read
+  `Manual override ON ...` while it's active.
+- **Soft (only if you enabled the off-by-default grace)** — change the setpoint by
+  hand and the coordinator leaves it alone for the grace period. Off by default;
+  prefer the toggles above.
 
 ## 5. Verify
 
@@ -349,10 +364,13 @@ satisfied. The target is clamped between the floor and ceiling.
    value (e.g. 72) while a room calls for cooling and the hallway is cooler than
    that. The coordinator should drive the target down (≈ sensed − 2) so the unit
    runs, and `input_number.zc_last_cmd_setpoint` updates to that value.
-10. **Manual respect.** Change the setpoint by hand: it should stick for the
-    grace period (`input_datetime.zc_manual_until` set into the future) rather
-    than being corrected on the next cycle. Turning
-    `input_boolean.zc_setpoint_manual` on holds it indefinitely.
+10. **Setpoint override.** Turn `input_boolean.zc_setpoint_manual` on: the
+    coordinator stops changing the setpoint (you set it) but still zones. Off →
+    it resumes force-run.
+11. **Full bypass.** Turn `input_boolean.zc_bypass` on: within the re-sync the
+    status lines read `Manual override ON ...`, and now change the thermostat,
+    mode, and any damper by hand — nothing gets reverted. Turn it off → automation
+    resumes and takes the dampers/unit back over.
 
 ### Template sanity check
 

@@ -142,10 +142,16 @@ input_boolean:
   # NOTE: sleep-mode and home-occupied booleans are intentionally NOT created
   # here - point the blueprints at your existing ones.
 
-  # Manual setpoint override for the coordinator's force-run feature.
+  # Manual setpoint override for the coordinator's force-run feature (setpoint only).
   zc_setpoint_manual:
     name: HVAC setpoint manual override
     icon: mdi:hand-back-right
+
+  # Full manual override / bypass: while on, the coordinator AND every room stand
+  # down completely (no mode, on/off, setpoint, or dampers) for full manual control.
+  zc_bypass:
+    name: HVAC full manual override (bypass)
+    icon: mdi:hand-back-right-off
 
 # Per-room raw demand (heat / cool / none), written by the Room Zone blueprint
 # and read by the Coordinator in priority order.

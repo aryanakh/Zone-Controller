@@ -210,8 +210,10 @@ Full step-by-step field values and a verification checklist are in
 - **Compressor reversal cooldown** — a short (default 3 min) heat↔cool changeover
   delay protects the compressor without ever overriding room priority.
 - **Setpoint force-run** — pushes the central thermostat's target past the
-  hallway temperature so the unit actually runs for a room that needs it, with a
-  manual override (hard toggle, or a grace period after a hand edit).
+  hallway temperature so the unit actually runs for a room that needs it.
+- **Full manual override / bypass** — one toggle makes the coordinator *and* every
+  room stand down completely (no mode, on/off, setpoint, or dampers) for total
+  hands-on control, until you turn it back off.
 - **Sleep / pre-cool** — the master bedroom drops to a colder target at night,
   via a manual Sleep toggle or automatically during a scheduled evening window.
 - **Scheduled activation** — a room can pre-cool on a daily window when the
