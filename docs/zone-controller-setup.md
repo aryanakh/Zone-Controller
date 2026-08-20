@@ -131,6 +131,10 @@ calling. Point each room at its own (`nursery_status`, `master_status`,
 - **Scheduled activation** (pre-cool for sleep):
   - Active after: **20:00:00** · Active until: **07:00:00**
   - Schedule requires house occupied: `input_boolean.<your_home_occupied>`
+  - Start the window earlier when this is on: `input_boolean.theater_guest_mode`
+    · Early-start minutes: **60** — when the theater guest room is running (extra
+    load, less airflow per room), pre-cool begins at **19:00** instead of 20:00 so
+    the bedroom still reaches its sleep target on time.
 
   This makes the master bedroom start pre-cooling around 8pm whenever the house
   is occupied, on top of its occupancy behaviour (the window runs overnight to

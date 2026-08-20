@@ -247,6 +247,31 @@ blueprint:
             entity:
               filter:
                 - domain: input_boolean
+        early_start_boolean:
+          name: Start the window earlier when this is on (optional)
+          description: >
+            Optional input_boolean - e.g. the theater guest-room mode toggle. While
+            it is on, this room's scheduled window (its "Active after" time, and
+            therefore its pre-cool) begins "Early-start minutes" sooner. Useful
+            when an extra zone (the guest theater) reduces available airflow, so
+            cooling needs a head start to still hit targets on time. Only affects
+            the window start; requires a schedule to be set above.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        early_start_minutes:
+          name: Early-start minutes
+          description: How much sooner to begin the window when the toggle above is on.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 15
+              unit_of_measurement: min
+              mode: box
 
     priority_section:
       name: Priority Yield (optional)
@@ -323,6 +348,8 @@ variables:
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
+  early_start_boolean: !input early_start_boolean
+  early_start_minutes: !input early_start_minutes
   priority_demand: !input priority_demand
   urgent_helper: !input urgent_helper
   urgent_margin: !input urgent_margin
@@ -336,11 +363,20 @@ variables:
   # Computed early because it also drives the pre-cool setpoint below.
   has_schedule: "{{ active_after is string and active_until is string }}"
   now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  # Effective window start - shifted earlier by early_start_minutes when the
+  # early-start toggle is on (e.g. theater guest mode), so pre-cool gets a head
+  # start. Handles wrapping past midnight (the in_window logic below re-checks
+  # crossing against this shifted start).
+  early_start_on: "{{ early_start_boolean is string and is_state(early_start_boolean, 'on') }}"
+  eff_after: >
+    {{ (as_timestamp(today_at(active_after)) - (early_start_minutes | float(0)) * 60)
+       | timestamp_custom('%H:%M:%S') if (has_schedule and early_start_on)
+       else active_after }}
   in_window: >
     {{ false if not has_schedule
-       else (active_after <= now_hms < active_until)
-         if (active_after <= active_until)
-       else (now_hms >= active_after or now_hms < active_until) }}
+       else (eff_after <= now_hms < active_until)
+         if (eff_after <= active_until)
+       else (now_hms >= eff_after or now_hms < active_until) }}
   schedule_home_ok: >
     {{ schedule_requires_home is not string
        or is_state(schedule_requires_home, 'on') }}
