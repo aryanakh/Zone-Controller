@@ -166,7 +166,9 @@ Create **one** automation from the **Coordinator** blueprint:
 - Main HVAC climate entity: `climate.upstairs_hvac`
 - **Room demand helpers, HIGHEST PRIORITY FIRST** — add in this order:
   `input_text.nursery_demand`, `input_text.master_demand`,
-  `input_text.server_demand`. **Order = priority.**
+  `input_text.server_demand`, and (if you use guest mode) `input_text.theater_demand`
+  **last**. **Order = priority** — the theater goes last so it's the
+  lowest-priority zone and yields its airflow to the rooms above it.
 - Room damper switches (all non-relief): `switch.damper_nursery`,
   `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`,
   `switch.damper_server_room`
@@ -238,9 +240,12 @@ Create **one** automation from the **Coordinator** blueprint:
     `input_number.theater_sleep_cool_sp` *(optional — for a colder night target)*
   - Theater hysteresis: **0.5**
   - Theater demand helper: `input_text.theater_demand` — **and also add this same
-    helper to the "Room demand helpers" list above**, at the priority you want
-    the guest room to have (e.g. right after the master bedroom). That is what
-    lets the guest room turn the unit on and take part in arbitration.
+    helper to the "Room demand helpers" list above as the LAST entry.** That lets
+    the guest room turn the unit on and take part in arbitration, and makes the
+    theater the **lowest-priority zone**: it closes its damper (yields its air) to
+    the nursery/master/server whenever they're being served, and only gets air
+    when no higher-priority room needs that direction. It still opens as the
+    relief valve when every other damper is closed.
 
 > **The auto manual-edit grace is OFF by default — keep it off.** It tried to
 > auto-detect a by-hand setpoint change and back off, but it proved too sensitive

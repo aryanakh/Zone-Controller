@@ -489,9 +489,11 @@ blueprint:
             An input_text the coordinator writes the theater's demand to
             (heat / cool / none) and reads back as its deadband memory. Required
             for guest mode. ALSO add this helper to the "Room demand helpers" list
-            above, at the priority you want the guest room to have (e.g. right
-            after the master bedroom) - that is what lets it turn the unit on and
-            take part in direction arbitration.
+            above, as the LAST entry - that lets it turn the unit on and take part
+            in arbitration, and makes the theater the lowest-priority zone: it
+            yields its airflow (damper closes) to any room listed before it that is
+            currently being served, and only gets air when no higher room needs
+            that direction. (If added elsewhere, it yields to whatever is above it.)
           default: {}
           selector:
             entity:
@@ -648,10 +650,27 @@ variables:
   need_flip: "{{ main_dir in ['heat', 'cool'] and winner_dir in ['heat', 'cool'] and winner_dir != main_dir }}"
   # --- relief / theater damper ---
   all_others_closed: "{{ zone_dampers | reject('is_state', 'off') | list | count == (zone_dampers | count) }}"
+  # The guest room (theater) is the LOWEST-priority zone: it yields whenever any
+  # higher-priority room (one listed BEFORE its demand helper in the demand list)
+  # is currently being served in the unit's direction - so the nursery/master get
+  # the air first. If the guest helper isn't in the list, treat every listed room
+  # as higher priority.
+  guest_yields: >
+    {% set ns = namespace(passed=false, yield=false) %}
+    {% for d in zone_demands %}
+      {% if d == guest_demand_helper %}{% set ns.passed = true %}
+      {% elif not ns.passed and (
+           (states(d) == 'cool' and main_state in ['cool', 'heat_cool']) or
+           (states(d) == 'heat' and main_state in ['heat', 'heat_cool'])) %}
+        {% set ns.yield = true %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.yield }}
   # In guest mode, the theater is served when it's calling in the direction the
-  # unit is currently delivering (same rule a Room Zone uses to open its damper).
+  # unit is currently delivering (same rule a Room Zone uses) AND no higher-
+  # priority room is being served.
   guest_open: >
-    {{ guest_active and (
+    {{ guest_active and not guest_yields and (
          (guest_demand == 'cool' and main_state in ['cool', 'heat_cool']) or
          (guest_demand == 'heat' and main_state in ['heat', 'heat_cool'])) }}
   # Open the theater damper (switch OFF) to serve the guest, OR as the relief
