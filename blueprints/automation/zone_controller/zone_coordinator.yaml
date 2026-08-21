@@ -75,8 +75,10 @@ blueprint:
           description: >
             The per-room demand input_text helpers, ordered by priority (add the
             highest-priority room first). Order IS the priority. For this house:
-            nursery, then master bedroom, then server room. The theater is a
-            relief valve and is not listed here.
+            nursery, then master bedroom, then server room. If you use theater
+            guest mode, add its theater_demand helper LAST (lowest priority) so it
+            yields to every room above it; if you do NOT use guest mode, leave the
+            theater out - it's only the relief valve then.
           selector:
             entity:
               multiple: true
