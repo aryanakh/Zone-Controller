@@ -55,6 +55,30 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        status_helper:
+          name: Room status output (input_text, optional)
+          description: >
+            Optional input_text this room writes a plain-English explanation of
+            what it is doing and why to (its temperature vs its effective target,
+            day/sleep, whether it's yielding or disabled). Purely diagnostic; add
+            it to a dashboard to see why each room is or isn't calling.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_text
+        bypass:
+          name: Full manual override / bypass (optional)
+          description: >
+            An input_boolean. While ON, this room does NOTHING - it stops driving
+            its damper (and publishing demand), so you have full manual control of
+            the damper until you turn it off. Use the SAME toggle here and in the
+            Coordinator so the whole system stands down together.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     sensors_section:
       name: Sensors & Entities
@@ -235,6 +259,31 @@ blueprint:
             entity:
               filter:
                 - domain: input_boolean
+        early_start_boolean:
+          name: Start the window earlier when this is on (optional)
+          description: >
+            Optional input_boolean - e.g. the theater guest-room mode toggle. While
+            it is on, this room's scheduled window (its "Active after" time, and
+            therefore its pre-cool) begins "Early-start minutes" sooner. Useful
+            when an extra zone (the guest theater) reduces available airflow, so
+            cooling needs a head start to still hit targets on time. Only affects
+            the window start; requires a schedule to be set above.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        early_start_minutes:
+          name: Early-start minutes
+          description: How much sooner to begin the window when the toggle above is on.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 15
+              unit_of_measurement: min
+              mode: box
 
     priority_section:
       name: Priority Yield (optional)
@@ -296,6 +345,9 @@ max_exceeded: silent
 variables:
   enabled: !input enabled
   demand_helper: !input demand_helper
+  status_helper: !input status_helper
+  bypass: !input bypass
+  bypassed: "{{ bypass is string and is_state(bypass, 'on') }}"
   zone_mode: !input zone_mode
   occupancy_sensor: !input occupancy_sensor
   room_temp_sensor: !input room_temp_sensor
@@ -310,6 +362,8 @@ variables:
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
+  early_start_boolean: !input early_start_boolean
+  early_start_minutes: !input early_start_minutes
   priority_demand: !input priority_demand
   urgent_helper: !input urgent_helper
   urgent_margin: !input urgent_margin
@@ -323,11 +377,20 @@ variables:
   # Computed early because it also drives the pre-cool setpoint below.
   has_schedule: "{{ active_after is string and active_until is string }}"
   now_hms: "{{ now().strftime('%H:%M:%S') }}"
+  # Effective window start - shifted earlier by early_start_minutes when the
+  # early-start toggle is on (e.g. theater guest mode), so pre-cool gets a head
+  # start. Handles wrapping past midnight (the in_window logic below re-checks
+  # crossing against this shifted start).
+  early_start_on: "{{ early_start_boolean is string and is_state(early_start_boolean, 'on') }}"
+  eff_after: >
+    {{ (as_timestamp(today_at(active_after)) - (early_start_minutes | float(0)) * 60)
+       | timestamp_custom('%H:%M:%S') if (has_schedule and early_start_on)
+       else active_after }}
   in_window: >
     {{ false if not has_schedule
-       else (active_after <= now_hms < active_until)
-         if (active_after <= active_until)
-       else (now_hms >= active_after or now_hms < active_until) }}
+       else (eff_after <= now_hms < active_until)
+         if (eff_after <= active_until)
+       else (now_hms >= eff_after or now_hms < active_until) }}
   schedule_home_ok: >
     {{ schedule_requires_home is not string
        or is_state(schedule_requires_home, 'on') }}
@@ -410,6 +473,16 @@ variables:
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
          (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
        ) }}
+  # Plain-English explanation of what this room is doing and why (for status_helper).
+  room_status: >-
+    {%- if bypassed -%}Manual override ON - not controlling this damper
+    {%- elif not enabled_on -%}Off (disabled)
+    {%- elif not temp_valid -%}No temperature reading
+    {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
+    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ 'sleep' if use_night_sp else 'day' }})
+    {%- elif raw_demand == 'heat' -%}Heating{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
+    {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}){{ ' - sleep setpoints' if use_night_sp else '' }}
+    {%- endif -%}
 
 trigger:
   - platform: state
@@ -430,6 +503,22 @@ trigger:
 condition: []
 
 action:
+  # Full manual override / bypass: note it in the room status, then STOP - the
+  # room stops driving its damper and publishing demand, leaving the damper under
+  # your manual control until the toggle is turned off.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ bypassed and status_helper is string and states(status_helper) != room_status }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "{{ room_status }}"
+  - condition: template
+    value_template: "{{ not bypassed }}"
+
   # WATCHDOG: always publish (no early abort). On an invalid/missing temperature
   # raw_demand computes to 'none' (the want_* checks require a valid temp), so a
   # dead or unavailable sensor fails SAFE to 'none' and closes the damper instead
@@ -452,6 +541,18 @@ action:
               entity_id: !input urgent_helper
             data:
               value: "{{ urgent_demand }}"
+
+  # Publish this room's plain-English status (only when set and changed).
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ status_helper is string and states(status_helper) != room_status }}"
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "{{ room_status }}"
 
   # Drive the damper. OPEN => switch OFF, CLOSED => switch ON (inverted).
   - choose:

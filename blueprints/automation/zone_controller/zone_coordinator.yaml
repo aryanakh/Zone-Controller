@@ -139,6 +139,20 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        bypass:
+          name: Full manual override / bypass (optional)
+          description: >
+            An input_boolean. While ON, the coordinator does NOTHING - it will not
+            touch the unit's on/off, mode, setpoint, or the theater/relief damper -
+            so you have full manual control of the HVAC until you turn it off. Use
+            the SAME toggle in every Room Zone so the rooms also stop driving their
+            dampers, giving you complete manual control of the whole system.
+            (This is broader than the setpoint-only "Manual setpoint override".)
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     presence_section:
       name: Home / Away
@@ -489,9 +503,11 @@ blueprint:
             An input_text the coordinator writes the theater's demand to
             (heat / cool / none) and reads back as its deadband memory. Required
             for guest mode. ALSO add this helper to the "Room demand helpers" list
-            above, at the priority you want the guest room to have (e.g. right
-            after the master bedroom) - that is what lets it turn the unit on and
-            take part in direction arbitration.
+            above, as the LAST entry - that lets it turn the unit on and take part
+            in arbitration, and makes the theater the lowest-priority zone: it
+            yields its airflow (damper closes) to any room listed before it that is
+            currently being served, and only gets air when no higher room needs
+            that direction. (If added elsewhere, it yields to whatever is above it.)
           default: {}
           selector:
             entity:
@@ -509,6 +525,8 @@ variables:
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
   status_helper: !input status_helper
+  bypass: !input bypass
+  bypassed: "{{ bypass is string and is_state(bypass, 'on') }}"
   house_mode: !input house_mode
   house_mode_away: !input house_mode_away
   house_mode_vacation: !input house_mode_vacation
@@ -648,10 +666,27 @@ variables:
   need_flip: "{{ main_dir in ['heat', 'cool'] and winner_dir in ['heat', 'cool'] and winner_dir != main_dir }}"
   # --- relief / theater damper ---
   all_others_closed: "{{ zone_dampers | reject('is_state', 'off') | list | count == (zone_dampers | count) }}"
+  # The guest room (theater) is the LOWEST-priority zone: it yields whenever any
+  # higher-priority room (one listed BEFORE its demand helper in the demand list)
+  # is currently being served in the unit's direction - so the nursery/master get
+  # the air first. If the guest helper isn't in the list, treat every listed room
+  # as higher priority.
+  guest_yields: >
+    {% set ns = namespace(passed=false, yield=false) %}
+    {% for d in zone_demands %}
+      {% if d == guest_demand_helper %}{% set ns.passed = true %}
+      {% elif not ns.passed and (
+           (states(d) == 'cool' and main_state in ['cool', 'heat_cool']) or
+           (states(d) == 'heat' and main_state in ['heat', 'heat_cool'])) %}
+        {% set ns.yield = true %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.yield }}
   # In guest mode, the theater is served when it's calling in the direction the
-  # unit is currently delivering (same rule a Room Zone uses to open its damper).
+  # unit is currently delivering (same rule a Room Zone uses) AND no higher-
+  # priority room is being served.
   guest_open: >
-    {{ guest_active and (
+    {{ guest_active and not guest_yields and (
          (guest_demand == 'cool' and main_state in ['cool', 'heat_cool']) or
          (guest_demand == 'heat' and main_state in ['heat', 'heat_cool'])) }}
   # Open the theater damper (switch OFF) to serve the guest, OR as the relief
@@ -737,17 +772,22 @@ variables:
   status_sp: >-
     {% if manage_setpoint and manual_hard %}manual override - thermostat left
     alone{% elif manage_now and grace_active %}recent manual change - leaving
-    thermostat alone{% elif manage_now and manual_edit_detected and has_bookkeeping
-    %}you changed the thermostat - keeping your value{% elif manage_now and
-    ((not cur_sp_valid) or ((cur_sp - desired_sp) | abs > 0.5)) %}set thermostat
-    to {{ desired_sp }}°{% elif manage_now %}thermostat already at {{ desired_sp
-    }}°{% endif %}
+    thermostat alone{% elif manage_now %}thermostat forced to {{ desired_sp }}°
+    (hallway is {{ sensed | round(1) }}°, pushed {{ 'below' if winner_dir == 'cool'
+    else 'above' }} it so the unit keeps running - this is a lever, not the room
+    target){% endif %}
+  # Which rooms are currently calling, by direction (friendly names of the demand
+  # helpers with the trailing " demand" stripped).
+  status_cooling_rooms: "{{ (zone_demands | select('is_state', 'cool') | map('state_attr', 'friendly_name') | select('string') | list | join(', ')) | replace(' demand', '') | replace(' Demand', '') }}"
+  status_heating_rooms: "{{ (zone_demands | select('is_state', 'heat') | map('state_attr', 'friendly_name') | select('string') | list | join(', ')) | replace(' demand', '') | replace(' Demand', '') }}"
   # No timestamp in the value - HA tracks last_changed for free, and a timestamp
   # would make the helper rewrite every run. The write below is skipped when the
   # message is unchanged, so it only updates when the decision actually changes.
   status_msg: >-
     {{ status_action }}{{ status_cap }}{% if status_sp | trim %} - {{ status_sp |
-    trim }}{% endif %} - {{ status_mode }}
+    trim }}{% endif %} - {{ status_mode }}{% if status_cooling_rooms %} - cooling:
+    {{ status_cooling_rooms }}{% endif %}{% if status_heating_rooms %} - heating:
+    {{ status_heating_rooms }}{% endif %}
 
 trigger:
   - platform: state
@@ -771,6 +811,25 @@ trigger:
 condition: []
 
 action:
+  # --- 0. Full manual override / bypass --------------------------------------
+  # While the bypass toggle is on, note it in the status and then STOP - the
+  # coordinator touches nothing (mode, on/off, setpoint, theater damper), leaving
+  # the whole unit under your manual control until you turn it off.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ bypassed and status_helper is string
+                 and states(status_helper) != 'Manual override ON - coordinator not controlling the unit' }}
+        sequence:
+          - service: input_text.set_value
+            target:
+              entity_id: !input status_helper
+            data:
+              value: "Manual override ON - coordinator not controlling the unit"
+  - condition: template
+    value_template: "{{ not bypassed }}"
+
   # --- 1. Theater damper: guest supply and/or pressure relief -----------------
   # Open (switch OFF) to serve the guest room (guest mode) or as the relief valve
   # when every other damper is closed; otherwise keep it closed (switch ON).

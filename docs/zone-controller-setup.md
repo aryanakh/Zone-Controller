@@ -62,10 +62,12 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
   `master_enabled`, `theater_guest_mode`
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
-  `theater_demand`
+  `theater_demand`; per-room status: `nursery_status`, `master_status`,
+  `server_status`
 - `input_datetime.zc_last_changeover`
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
+- Full manual override: `input_boolean.zc_bypass`
 - `zone.home_wide` (~5 mi)
 
 > The **sleep-mode** and **home-occupied** booleans are **not** created by the
@@ -85,9 +87,21 @@ both (or copy into `<config>/blueprints/automation/zone_controller/`):
 
 Create **one automation per conditioned room** from the **Room Zone** blueprint.
 
+Each room also has an optional **Room status output** (`input_text`) it writes a
+plain-English explanation to — its temperature vs its effective target, day/sleep,
+whether it's yielding or disabled — so you can see *why* each room is or isn't
+calling. Point each room at its own (`nursery_status`, `master_status`,
+`server_status`).
+
+Also set every room's **Full manual override / bypass** input to the shared
+`input_boolean.zc_bypass` (the same one the Coordinator uses). While that toggle
+is on, the room stops driving its damper so you have full manual control; off, it
+resumes. (Omitted from the per-room lists below for brevity — set it on each.)
+
 ### Nursery (priority 1 — standard, tight band)
 - Room enable toggle: `input_boolean.nursery_enabled`
 - Demand helper: `input_text.nursery_demand`
+- Room status output: `input_text.nursery_status`
 - Room temperature sensor: `sensor.nursery_temperature`
 - Damper switch(es): `switch.damper_nursery`
 - Main HVAC climate entity: `climate.upstairs_hvac`
@@ -104,6 +118,7 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 ### Master bedroom (priority 2 — occupancy, cool-only, sleep, 2 dampers)
 - Room enable toggle: `input_boolean.master_enabled`
 - Demand helper: `input_text.master_demand`
+- Room status output: `input_text.master_status`
 - Room temperature sensor: `sensor.master_bedroom_temperature`
 - Damper switch(es): `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`
 - Main HVAC climate entity: `climate.upstairs_hvac`
@@ -122,6 +137,10 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 - **Scheduled activation** (pre-cool for sleep):
   - Active after: **20:00:00** · Active until: **07:00:00**
   - Schedule requires house occupied: `input_boolean.<your_home_occupied>`
+  - Start the window earlier when this is on: `input_boolean.theater_guest_mode`
+    · Early-start minutes: **60** — when the theater guest room is running (extra
+    load, less airflow per room), pre-cool begins at **19:00** instead of 20:00 so
+    the bedroom still reaches its sleep target on time.
 
   This makes the master bedroom start pre-cooling around 8pm whenever the house
   is occupied, on top of its occupancy behaviour (the window runs overnight to
@@ -135,6 +154,7 @@ Create **one automation per conditioned room** from the **Room Zone** blueprint.
 ### Server room (priority 3 — always on, cool-only)
 - Room enable toggle: `input_boolean.server_enabled`
 - Demand helper: `input_text.server_demand`
+- Room status output: `input_text.server_status`
 - Room temperature sensor: `sensor.server_room_temperature`
 - Damper switch(es): `switch.damper_server_room`
 - Main HVAC climate entity: `climate.upstairs_hvac`
@@ -156,7 +176,9 @@ Create **one** automation from the **Coordinator** blueprint:
 - Main HVAC climate entity: `climate.upstairs_hvac`
 - **Room demand helpers, HIGHEST PRIORITY FIRST** — add in this order:
   `input_text.nursery_demand`, `input_text.master_demand`,
-  `input_text.server_demand`. **Order = priority.**
+  `input_text.server_demand`, and (if you use guest mode) `input_text.theater_demand`
+  **last**. **Order = priority** — the theater goes last so it's the
+  lowest-priority zone and yields its airflow to the rooms above it.
 - Room damper switches (all non-relief): `switch.damper_nursery`,
   `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`,
   `switch.damper_server_room`
@@ -168,6 +190,8 @@ Create **one** automation from the **Coordinator** blueprint:
   `Starting cooling - set thermostat to 72° - Home`. Add it to a dashboard
   (or just watch it in Developer Tools → States) to see exactly what the
   coordinator did and why on each run. See **Reading the status line** below.
+- Full manual override / bypass *(optional)*: `input_boolean.zc_bypass` — while on,
+  the coordinator touches nothing. **Use this same helper in every Room Zone too.**
 - House mode selector *(optional)*: `input_select.<your_house_mode>` — when it
   reads **Away** the unit is forced into the eco preset (Eco mode); when it reads
   **Vacation** the unit is turned off. Any other value falls back to the
@@ -228,9 +252,12 @@ Create **one** automation from the **Coordinator** blueprint:
     `input_number.theater_sleep_cool_sp` *(optional — for a colder night target)*
   - Theater hysteresis: **0.5**
   - Theater demand helper: `input_text.theater_demand` — **and also add this same
-    helper to the "Room demand helpers" list above**, at the priority you want
-    the guest room to have (e.g. right after the master bedroom). That is what
-    lets the guest room turn the unit on and take part in arbitration.
+    helper to the "Room demand helpers" list above as the LAST entry.** That lets
+    the guest room turn the unit on and take part in arbitration, and makes the
+    theater the **lowest-priority zone**: it closes its damper (yields its air) to
+    the nursery/master/server whenever they're being served, and only gets air
+    when no higher-priority room needs that direction. It still opens as the
+    relief valve when every other damper is closed.
 
 > **The auto manual-edit grace is OFF by default — keep it off.** It tried to
 > auto-detect a by-hand setpoint change and back off, but it proved too sensitive
@@ -264,13 +291,20 @@ temperature (e.g. cool → 65 °F) so it actually runs; the room dampers then do
 real regulation and the coordinator turns the unit off once every room is
 satisfied. The target is clamped between the floor and ceiling.
 
-**Keeping manual control.** Two ways to override:
-- **Hard:** turn `input_boolean.zc_setpoint_manual` **on** — the coordinator
-  never touches the setpoint until you turn it back off.
-- **Soft:** just change the setpoint by hand (toggle off). The coordinator
-  detects the manual edit and leaves it alone for the grace period (default 30
-  min) before resuming force-run. So a manual tweak is never overridden
-  immediately.
+**Keeping manual control.** Three levels, lightest to heaviest:
+- **Setpoint only** — turn `input_boolean.zc_setpoint_manual` **on**. The
+  coordinator stops touching the *setpoint* (you pick the temperature) but still
+  runs on/off, mode, and the dampers. Off = hand setpoint control back.
+- **Full manual override / bypass** — turn `input_boolean.zc_bypass` **on**. The
+  coordinator **and every room stand down completely**: no on/off, no mode, no
+  setpoint, no damper moves. You have total manual control of the thermostat and
+  all dampers until you turn it off, at which point automation resumes (within
+  the ~2 min re-sync). **Point every Room Zone's *Full manual override* input and
+  the Coordinator's at this same `zc_bypass` toggle.** The status lines read
+  `Manual override ON ...` while it's active.
+- **Soft (only if you enabled the off-by-default grace)** — change the setpoint by
+  hand and the coordinator leaves it alone for the grace period. Off by default;
+  prefer the toggles above.
 
 ## 5. Verify
 
@@ -330,10 +364,13 @@ satisfied. The target is clamped between the floor and ceiling.
    value (e.g. 72) while a room calls for cooling and the hallway is cooler than
    that. The coordinator should drive the target down (≈ sensed − 2) so the unit
    runs, and `input_number.zc_last_cmd_setpoint` updates to that value.
-10. **Manual respect.** Change the setpoint by hand: it should stick for the
-    grace period (`input_datetime.zc_manual_until` set into the future) rather
-    than being corrected on the next cycle. Turning
-    `input_boolean.zc_setpoint_manual` on holds it indefinitely.
+10. **Setpoint override.** Turn `input_boolean.zc_setpoint_manual` on: the
+    coordinator stops changing the setpoint (you set it) but still zones. Off →
+    it resumes force-run.
+11. **Full bypass.** Turn `input_boolean.zc_bypass` on: within the re-sync the
+    status lines read `Manual override ON ...`, and now change the thermostat,
+    mode, and any damper by hand — nothing gets reverted. Turn it off → automation
+    resumes and takes the dampers/unit back over.
 
 ### Template sanity check
 
@@ -355,10 +392,13 @@ changes** (not every cycle), so use the entity's *last changed* time to see when
 the coordinator last acted. Format:
 
 ```
-<what the unit is doing> - <thermostat action> - <house mode>
+<what the unit is doing> - <thermostat action> - <house mode>[ - cooling: ...][ - heating: ...]
 ```
 
 The **thermostat action** part only appears when Setpoint Force-Run is enabled.
+The **cooling:/heating:** lists name the rooms currently calling in each
+direction (from the demand helpers' friendly names, minus the " demand" suffix);
+each is shown only when at least one room is calling that way.
 
 **What the unit is doing:**
 - `Starting cooling` / `Starting heating` — unit was off (or idling) and a room called.
@@ -376,11 +416,17 @@ The **thermostat action** part only appears when Setpoint Force-Run is enabled.
   room asked), e.g. `Starting cooling (hallway over 76°)`.
 
 **Thermostat action** (force-run):
-- `set thermostat to 72°` — pushed the target so the unit actually runs.
-- `thermostat already at 72°` — target was already right, left it.
-- `you changed the thermostat - keeping your value` — you edited it by hand; honoring it.
-- `recent manual change - leaving thermostat alone` — inside the manual-edit grace window.
+- `thermostat forced to 67° (hallway is 72°, pushed below it so the unit keeps
+  running - this is a lever, not the room target)` — the central thermostat
+  senses the **hallway**, so to make the unit run for a room the coordinator
+  pushes the setpoint **below** the hallway (for cooling) or **above** it (for
+  heating). The number is a *control lever*, **not** the temperature any room is
+  aimed at — each room is served by its damper opening/closing. So "67° while the
+  hallway reads 72°" just means "keep cooling"; it does **not** mean the house is
+  being cooled to 67.
 - `manual override - thermostat left alone` — the hard manual override toggle is on.
+- `recent manual change - leaving thermostat alone` — only if you enabled the
+  (off-by-default) auto manual-edit grace.
 
 **House mode:**
 - `Home Day` — home, outside the night window.
@@ -396,9 +442,8 @@ label-only and change no conditioning.
 Examples:
 
 ```
-Starting cooling - set thermostat to 72° - Home Day
-Cooling - thermostat already at 72° - Home Night
-Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day
+Cooling - thermostat forced to 67° (hallway is 72°, pushed below it so the unit keeps running - this is a lever, not the room target) - Home Day - cooling: Master bedroom
+Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day - heating: Nursery - cooling: Master bedroom
 Idle - holding 64-76° band - Home Night
 Holding 64-76° band - Eco Away
 Off - forced (vacation) - Vacation
@@ -408,6 +453,28 @@ If the status line **never updates**, the coordinator automation itself isn't
 running — check that it's enabled and look at its trace. If it shows
 `Off - no room calling` while a room is hot, that room isn't publishing demand
 (check its demand `input_text` and temp sensor).
+
+### Reading a room's status
+
+Each Room Zone can also write a plain-English line to its own status helper
+explaining **why it is or isn't calling** — its temperature vs its *effective*
+target, whether it's on day or sleep setpoints, and whether it's yielding or
+disabled. Examples:
+
+```
+Cooling - 76.4° vs 75.0° target (day)                 ← above the 75° day target, so it's calling
+Cooling - 68.5° vs 68.0° target (sleep)               ← on the sleep setpoint (why it cools a ~68° room)
+Idle - 71.0° (cool above 72.0°, heat below 68.0°)     ← comfortable, not calling
+Heating - 66.5° vs 68.0° target
+Cooling (yielding to priority) - 76.0° vs 75.0° target (day)  ← damper closed to focus air on the nursery
+Idle - 73.0° (not eligible: occupancy/schedule)       ← gated off by occupancy or its window
+Off (disabled)                                        ← enable toggle is off
+No temperature reading                                ← sensor unavailable (fails safe to idle)
+```
+
+This is the companion to the coordinator line: the coordinator explains what the
+*unit* is doing; each room status explains what that *room* wants and why. The
+`(sleep)` / `(day)` tag is the quickest way to catch a stuck sleep toggle.
 
 ## Notes & limitations
 
