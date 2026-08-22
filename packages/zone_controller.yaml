@@ -91,6 +91,15 @@ input_number:
     icon: mdi:bed-clock
     initial: 68
 
+  master_away_cool_sp:
+    name: Master bedroom cool setpoint (away)
+    min: 68
+    max: 82
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:bed-outline
+    initial: 75
+
   # Theater / bonus room setpoints, used only when guest-room mode is on.
   theater_cool_sp:
     name: Theater cool setpoint (day)

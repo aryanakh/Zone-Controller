@@ -57,8 +57,8 @@ Edit the package and replace every `# TODO` (the `zone:` latitude/longitude, and
 confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 
 - Setpoints: `input_number.nursery_heat_sp` / `nursery_cool_sp`,
-  `server_cool_sp`, `master_cool_sp` / `master_sleep_cool_sp`,
-  `theater_cool_sp` / `theater_sleep_cool_sp`
+  `server_cool_sp`, `master_cool_sp` / `master_sleep_cool_sp` /
+  `master_away_cool_sp`, `theater_cool_sp` / `theater_sleep_cool_sp`
 - Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
   `master_enabled`, `theater_guest_mode`
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
@@ -134,6 +134,11 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.<your_sleep_mode>`
 - Sleep / pre-cool cool setpoint: `input_number.master_sleep_cool_sp`
+- **Away Setpoint Override:** Home-occupied toggle → `input_boolean.<your_home_occupied>`
+  · Away cool setpoint → `input_number.master_away_cool_sp` (**75**). While away
+  (home toggle off) the master stays eligible **even though it's occupancy-gated**
+  and is capped at 75° — so it can't bake to 78 while you're out, but still runs
+  warmer than its day target to save power.
 - **Scheduled activation** (pre-cool for sleep):
   - Active after: **20:00:00** · Active until: **07:00:00**
   - Schedule requires house occupied: `input_boolean.<your_home_occupied>`
@@ -204,13 +209,14 @@ Create **one** automation from the **Coordinator** blueprint:
 - Away preset name / Home preset name: match your unit's presets (defaults
   `eco` / `none`).
 
-> **Eco Away holds the wide band, it doesn't cool to setpoint.** When nobody is
-> home with the eco action (or the house-mode selector is **Away**), the unit is
-> held in the `heat_cool` idle band (default **64–76**) and force-run is
-> suspended — so it never spends power cooling the house to ~72 while you're out;
-> the whole house just floats between the band limits, including the server room
-> (which floats up to 76 rather than its normal setpoint). Use **Vacation** if you
-> want it fully off instead.
+> **Eco Away caps each room at its own away setpoint.** When nobody is home with
+> the eco action (or the house-mode selector is **Away**), the eco preset is
+> applied and the coordinator keeps **serving rooms** — but each room uses its
+> **away cool setpoint** (see each Room Zone's *Away Setpoint Override*), which you
+> set warmer than its day target to save power while still keeping it from baking
+> (e.g. the master at 75). This is per-room, so an unoccupied bedroom can't drift
+> to 78 the way a hallway-only band allowed. Use **Vacation** to turn the unit
+> fully off instead.
 - Night starts / ends at: **21:00:00** / **07:00:00** *(label-only — drives the
   `Home Night` vs `Home Day` status; the window may cross midnight)*
 - Night/sleep toggle *(optional)*: `input_boolean.<your_sleep_mode>` — while on,
@@ -347,9 +353,10 @@ satisfied. The target is clamped between the floor and ceiling.
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
    `zone.home_wide` (or set the house-mode selector to Away). The eco preset is
-   applied and the unit holds the `heat_cool` **64–76** band — it should **not**
-   force-run the setpoint down to ~72. The status shows `Holding 64-76° band -
-   Eco Away`. It only cools if the house rises past 76.
+   applied and each room switches to its **away** cool setpoint. With the master's
+   away setpoint at 75, warm it past 75 → its status shows `Cooling … (away)`, it's
+   served (even though unoccupied), and it's held at ~75 instead of drifting to 78.
+   Rooms without an away setpoint just use their normal setpoints. Mode = `Eco Away`.
 9. **Idle band.** With every room satisfied (nobody calling) and idle behavior
    set to **hold band**, the unit should sit in `heat_cool` on the 64–76 band
    (`Idle - holding 64-76° band` in the status line) — cooling if the house
@@ -464,7 +471,8 @@ disabled. Examples:
 ```
 Cooling - 76.4° vs 75.0° target (day)                 ← above the 75° day target, so it's calling
 Cooling - 68.5° vs 68.0° target (sleep)               ← on the sleep setpoint (why it cools a ~68° room)
-Idle - 71.0° (cool above 72.0°, heat below 68.0°)     ← comfortable, not calling
+Cooling - 76.0° vs 75.0° target (away)                ← nobody home: held at the away setpoint (not baking)
+Idle - 71.0° (cool above 72.0°, heat below 68.0°) (day)  ← comfortable, not calling
 Heating - 66.5° vs 68.0° target
 Cooling (yielding to priority) - 76.0° vs 75.0° target (day)  ← damper closed to focus air on the nursery
 Idle - 73.0° (not eligible: occupancy/schedule)       ← gated off by occupancy or its window
@@ -474,7 +482,8 @@ No temperature reading                                ← sensor unavailable (fa
 
 This is the companion to the coordinator line: the coordinator explains what the
 *unit* is doing; each room status explains what that *room* wants and why. The
-`(sleep)` / `(day)` tag is the quickest way to catch a stuck sleep toggle.
+`(day)` / `(sleep)` / `(away)` tag is the quickest way to catch a stuck sleep
+toggle or confirm the away cap is in effect.
 
 ## Notes & limitations
 

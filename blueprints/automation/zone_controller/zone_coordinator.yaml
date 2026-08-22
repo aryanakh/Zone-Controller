@@ -638,15 +638,11 @@ variables:
   cap_sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   cap_sensed: "{{ cap_sensed_raw | float(0) }}"
   cap_active: >
-    {{ cap_enabled and not want_eco and is_number(cap_sensed_raw) and room_dir == 'none'
+    {{ cap_enabled and is_number(cap_sensed_raw) and room_dir == 'none'
        and (cap_sensed > idle_high
             or (main_dir == 'cool' and cap_sensed > idle_high - 0.5)) }}
   # A room's demand wins; otherwise the cap can force cooling (in "cap" mode).
   winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
-  # Eco Away holds the wide heat_cool band instead of serving rooms to their
-  # setpoints - so it never spends power cooling to ~72 while nobody is home; the
-  # house just floats within the band.
-  eco_band: "{{ want_eco }}"
   # Is the unit already holding the idle heat_cool band (so we can skip re-commanding)?
   main_ttl: "{{ state_attr(main_climate, 'target_temp_low') }}"
   main_tth: "{{ state_attr(main_climate, 'target_temp_high') }}"
@@ -696,10 +692,10 @@ variables:
   theater_open: "{{ guest_open or all_others_closed }}"
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
   # --- setpoint force-run ---
-  # No force-run while forced off or in Eco Away (the eco band holds itself via
-  # the unit's native heat_cool control - we never push it down to ~72).
+  # Force-run whenever a room (or the cap) is calling and we're not forced off.
+  # In Eco Away we still serve rooms - each caps itself at its own away setpoint.
   unit_should_run: >
-    {{ winner_dir in ['heat', 'cool'] and not force_off and not eco_band }}
+    {{ winner_dir in ['heat', 'cool'] and not force_off }}
   sensed_raw: "{{ state_attr(main_climate, 'current_temperature') }}"
   sensed_valid: "{{ is_number(sensed_raw) }}"
   sensed: "{{ sensed_raw | float(0) }}"
@@ -757,9 +753,9 @@ variables:
   status_dir_word: "{{ 'cooling' if winner_dir == 'cool' else 'heating' }}"
   status_action: >-
     {% if force_off %}Off - forced ({{ 'vacation' if hm_vacation else 'away' }}){%
-    elif eco_band %}Holding {{ idle_low }}-{{ idle_high }}° band{% elif winner_dir
-    == 'none' and idle_hold %}Idle - holding {{ idle_low }}-{{ idle_high }}° band{%
-    elif winner_dir == 'none' %}Off - no room calling{% elif main_dir == 'off'
+    elif winner_dir == 'none' and idle_hold %}Idle - holding {{ idle_low }}-{{
+    idle_high }}° band{% elif winner_dir == 'none' %}Off - no room calling{% elif
+    main_dir == 'off'
     %}Starting {{ status_dir_word }}{% elif need_flip and allow_flip %}Switching to
     {{ status_dir_word }}{% elif need_flip %}Waiting to switch to {{ status_dir_word
     }} (compressor cooldown {{ mins_since_change | round(0) }}/{{ min_changeover }}
@@ -883,34 +879,6 @@ action:
           - service: climate.turn_off
             target:
               entity_id: !input main_climate
-      # Eco Away: hold the wide heat_cool band instead of serving rooms, so we
-      # don't spend power cooling to ~72 while nobody is home - the house just
-      # floats within the band. Takes precedence over room demands and the cap.
-      - conditions:
-          - condition: template
-            value_template: "{{ eco_band }}"
-        sequence:
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ main_state != 'heat_cool' }}"
-                sequence:
-                  - service: climate.set_hvac_mode
-                    target:
-                      entity_id: !input main_climate
-                    data:
-                      hvac_mode: heat_cool
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: "{{ not idle_band_set }}"
-                sequence:
-                  - service: climate.set_temperature
-                    target:
-                      entity_id: !input main_climate
-                    data:
-                      target_temp_low: "{{ idle_low }}"
-                      target_temp_high: "{{ idle_high }}"
       # No room is calling -> idle behavior. Hold a heat_cool safety band, or
       # (off / cap modes) switch the unit off.
       - conditions:

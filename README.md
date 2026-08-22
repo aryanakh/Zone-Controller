@@ -107,8 +107,9 @@ Runs once for the whole house. It:
   theater like a bedroom (own sensor + setpoints + sleep target) and opens its
   damper to serve it, still falling back to relief when the guest isn't calling;
 - handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone); when away
-  it applies the eco preset and holds the wide `heat_cool` band (default 64–76)
-  instead of cooling to setpoint, so it doesn't waste power while nobody's home;
+  it applies the eco preset and each room switches to its own **away cool
+  setpoint** (warmer than its day target to save power, but low enough that an
+  unoccupied room can't bake) — capped per-room, not just a hallway band;
 - honours an optional **house-mode selector** — `Away` forces the eco preset,
   `Vacation` turns the unit off;
 - applies a configurable **idle backstop** when no room is calling — off, a

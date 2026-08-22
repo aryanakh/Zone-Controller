@@ -225,6 +225,35 @@ blueprint:
               filter:
                 - domain: input_number
 
+    away_section:
+      name: Away Setpoint Override (optional)
+      icon: mdi:home-export-outline
+      collapsed: true
+      input:
+        home_occupied_ref:
+          name: Home-occupied toggle (for away setpoint)
+          description: >
+            Optional input_boolean - point it at your home-occupied toggle. While
+            it is OFF (nobody home) this room uses the away cool setpoint below and
+            stays eligible even if it's an occupancy-gated room, so it can't bake
+            while you're out. Needs the away setpoint below to take effect.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        away_cool_setpoint:
+          name: Away cool setpoint
+          description: >
+            Optional input_number - the cool setpoint used while away (home toggle
+            off). Set it warmer than the day setpoint to save power, but low enough
+            that the room never bakes (e.g. 75). Takes precedence over day/sleep.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_number
+
     schedule_section:
       name: Scheduled Activation (optional)
       icon: mdi:clock-outline
@@ -359,6 +388,8 @@ variables:
   hysteresis: !input hysteresis
   sleep_boolean: !input sleep_boolean
   sleep_cool_setpoint: !input sleep_cool_setpoint
+  home_occupied_ref: !input home_occupied_ref
+  away_cool_setpoint: !input away_cool_setpoint
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
@@ -404,8 +435,17 @@ variables:
     {{ sleep_cool_setpoint is string and (
          (sleep_boolean is string and is_state(sleep_boolean, 'on'))
          or schedule_active ) }}
-  # The active cool-setpoint entity (sleep/pre-cool target when applicable).
-  cool_sp_src: "{{ sleep_cool_setpoint if use_night_sp else cool_setpoint }}"
+  # Away: while the home toggle is OFF and an away setpoint is configured, use it
+  # (takes precedence over day/sleep) and keep the room eligible even if
+  # occupancy-gated, so it can't bake while nobody is home.
+  away_active: >
+    {{ home_occupied_ref is string and is_state(home_occupied_ref, 'off')
+       and away_cool_setpoint is string }}
+  # The active cool-setpoint entity: away > sleep/pre-cool > day.
+  cool_sp_src: >
+    {{ away_cool_setpoint if away_active
+       else sleep_cool_setpoint if use_night_sp
+       else cool_setpoint }}
   # WATCHDOG: only trust the cool setpoint when it is a real number. If the helper
   # is unavailable/unknown, do NOT fall back to 0 (that would make every reading
   # look "too hot" and demand cooling forever, even far below the real setpoint).
@@ -419,8 +459,9 @@ variables:
        else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
          if zone_mode == 'occupancy'
        else true }}
-  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window).
-  active: "{{ enabled_on and (mode_active or schedule_active) }}"
+  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window OR away -
+  # away keeps the room eligible so it can be capped at its away setpoint).
+  active: "{{ enabled_on and (mode_active or schedule_active or away_active) }}"
   # Raw directional demand with a true two-sided deadband, independent of the
   # unit's mode. The room's own last-published demand (in demand_helper) is the
   # state memory: engage above cool_sp+hyst, then hold 'cool' until temp drops
@@ -473,15 +514,17 @@ variables:
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
          (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
        ) }}
+  # Which setpoint set is in effect (for the status line).
+  sp_tag: "{{ 'away' if away_active else 'sleep' if use_night_sp else 'day' }}"
   # Plain-English explanation of what this room is doing and why (for status_helper).
   room_status: >-
     {%- if bypassed -%}Manual override ON - not controlling this damper
     {%- elif not enabled_on -%}Off (disabled)
     {%- elif not temp_valid -%}No temperature reading
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
-    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ 'sleep' if use_night_sp else 'day' }})
+    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ sp_tag }})
     {%- elif raw_demand == 'heat' -%}Heating{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
-    {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}){{ ' - sleep setpoints' if use_night_sp else '' }}
+    {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}) ({{ sp_tag }})
     {%- endif -%}
 
 trigger:
