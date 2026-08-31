@@ -188,6 +188,10 @@ Create **one** automation from the **Coordinator** blueprint:
   `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`,
   `switch.damper_server_room`
 - Relief valve damper switch: `switch.damper_theater`
+- Minimum open zones while cooling: **2** — while cooling, the theater relief
+  damper opens whenever fewer than 2 room dampers are open, so the unit never runs
+  through a single small zone (high static pressure). Set to **1** for the
+  original behavior. Heating is unaffected; it only ever opens the theater.
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
@@ -337,14 +341,17 @@ satisfied. The target is clamped between the floor and ceiling.
    `min_changeover` minutes pass (unless no room is still calling the current
    direction). With the default of 3 min, the nursery is served ~3 min after the
    last reversal at worst; set the cooldown to 0 for instant reversal.
-5. **Relief valve.** Force every room damper closed (each switch `on`):
-   `switch.damper_theater` goes **off** (open). Open any room damper and the
-   theater damper goes **on** (closed).
+5. **Relief valve + min-open pressure relief.** Force every room damper closed
+   (each switch `on`): `switch.damper_theater` goes **off** (open). Now, **while
+   cooling**, open exactly **one** room damper — the theater should **stay off**
+   (open) because fewer than 2 zones are open. Open a **second** room and the
+   theater goes **on** (closed). (While heating, the theater closes as soon as any
+   one room is open — heating is unaffected.)
    - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
      theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
      unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.
      Satisfy the theater (or turn guest mode off) and it reverts to relief-valve
-     behavior (open only when all other dampers are closed).
+     behavior (open when too few zones are open, per the min-open rule above).
 6. **Main on/off.** With a room calling, the unit switches on in the winning
    direction. With every room satisfied/disabled, it switches off.
 7. **Sleep / pre-cool.** Turn on `input_boolean.<your_sleep_mode>`; the master

@@ -21,9 +21,12 @@ blueprint:
          lower-priority room. It stamps the last changeover into an
          input_datetime helper.
 
-      3. Pressure relief - the theater / bonus damper is a relief valve, opened
-         only when every other (non-hallway) damper is closed, so the hallway
-         (always open) plus the relief path keep the duct from over-pressurizing.
+      3. Pressure relief - the theater / bonus damper is a relief valve. It opens
+         when every other damper is closed, AND (while cooling) whenever fewer
+         than "Minimum open zones while cooling" room dampers are open - so the
+         unit never runs through a single small zone (high static pressure); there
+         are always at least that many open paths (a bedroom plus the theater).
+         Heating is unaffected, and it never heats or over-cools a bedroom.
          Optionally, a guest-room mode conditions the theater like a bedroom
          (its own temp sensor + setpoints, with sleep support) and opens its
          damper to serve it, while still falling back to the relief role when the
@@ -102,6 +105,23 @@ blueprint:
               multiple: true
               filter:
                 - domain: switch
+        min_open_zones_cool:
+          name: Minimum open zones while cooling
+          description: >
+            To protect the blower/coil from high static pressure, while the unit
+            is COOLING the theater relief damper opens whenever fewer than this
+            many room dampers are open - so there are always at least this many
+            open airflow paths (e.g. one bedroom plus the theater). Set to 1 for
+            the original behavior (relief only when every room is closed). Heating
+            is unaffected. Never heats or over-cools a bedroom - it only opens the
+            theater/bonus room.
+          default: 2
+          selector:
+            number:
+              min: 1
+              max: 4
+              step: 1
+              mode: box
         min_changeover:
           name: Compressor reversal cooldown (minutes)
           description: >
@@ -524,6 +544,7 @@ variables:
   zone_demands: !input zone_demands
   zone_dampers: !input zone_dampers
   relief_damper: !input relief_damper
+  min_open_zones_cool: !input min_open_zones_cool
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
   status_helper: !input status_helper
@@ -664,6 +685,15 @@ variables:
   need_flip: "{{ main_dir in ['heat', 'cool'] and winner_dir in ['heat', 'cool'] and winner_dir != main_dir }}"
   # --- relief / theater damper ---
   all_others_closed: "{{ zone_dampers | reject('is_state', 'off') | list | count == (zone_dampers | count) }}"
+  # How many room dampers are currently open (off = open). Used to keep enough
+  # airflow paths open while cooling so static pressure stays reasonable.
+  open_room_count: "{{ zone_dampers | select('is_state', 'off') | list | count }}"
+  # Pressure relief is needed when: every room is closed (any mode), OR - while
+  # cooling - fewer than the minimum zones are open (open the theater as an extra
+  # path so we never run through a single small zone).
+  relief_needed: >
+    {{ all_others_closed
+       or (main_state in ['cool', 'heat_cool'] and open_room_count < min_open_zones_cool) }}
   # The guest room (theater) is the LOWEST-priority zone: it yields whenever any
   # higher-priority room (one listed BEFORE its demand helper in the demand list)
   # is currently being served in the unit's direction - so the nursery/master get
@@ -688,8 +718,9 @@ variables:
          (guest_demand == 'cool' and main_state in ['cool', 'heat_cool']) or
          (guest_demand == 'heat' and main_state in ['heat', 'heat_cool'])) }}
   # Open the theater damper (switch OFF) to serve the guest, OR as the relief
-  # valve when every other damper is closed.
-  theater_open: "{{ guest_open or all_others_closed }}"
+  # valve when pressure relief is needed (all rooms closed, or too few open while
+  # cooling).
+  theater_open: "{{ guest_open or relief_needed }}"
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
   # --- setpoint force-run ---
   # Force-run whenever a room (or the cap) is calling and we're not forced off.

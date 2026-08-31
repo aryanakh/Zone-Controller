@@ -240,7 +240,8 @@ Full step-by-step field values and a verification checklist are in
   Home`), updated only when the decision changes, so you can see at a glance what
   it did and why.
 - **Pressure relief** — the theater damper opens automatically so the duct is
-  never over-pressurized.
+  never over-pressurized; while cooling it keeps a minimum number of zones open
+  (default 2) so the unit never runs through a single small zone.
 - **Fail-open** — normally-open dampers spring open on power loss.
 - **100% local** — no cloud dependency.
 
