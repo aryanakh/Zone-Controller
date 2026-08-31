@@ -166,10 +166,14 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 - Cool setpoint: `input_number.server_cool_sp` · Enable cooling: **on**
 - Heat setpoint: *(leave unset)* · Enable heating: **off**
 - Zone mode: **Always on**
+- **Cooling Ride-Along:** *"Ride along while cooling"* = **on** · *Ride-along floor
+  below cool setpoint* = **4**. This makes the server the preferred second airflow
+  path: whenever the unit is cooling for another room, the server damper stays open
+  (down to ~4° below its setpoint), so cooling relief goes to the server (which
+  always benefits) instead of being wasted on the theater. The theater then only
+  opens as a last resort (e.g. the server is already cold).
 - **Priority Yield:** *leave unset.* The server must never stop getting air, so it
-  should not yield to the nursery (or any room). When other rooms yield to the
-  nursery and only the nursery is open, the theater relief valve provides the
-  pressure path — the server does not need to.
+  should not yield to the nursery (or any room).
 
 > The theater / bonus room does **not** get a Room Zone automation — its damper
 > is managed only by the coordinator.
@@ -188,10 +192,12 @@ Create **one** automation from the **Coordinator** blueprint:
   `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`,
   `switch.damper_server_room`
 - Relief valve damper switch: `switch.damper_theater`
-- Minimum open zones while cooling: **2** — while cooling, the theater relief
-  damper opens whenever fewer than 2 room dampers are open, so the unit never runs
-  through a single small zone (high static pressure). Set to **1** for the
-  original behavior. Heating is unaffected; it only ever opens the theater.
+- Minimum open zones while cooling: **2** — while cooling, keep at least 2 zones
+  open so the unit never runs through a single small zone (high static pressure).
+  The **server's Cooling Ride-Along** normally provides the second zone (useful
+  cooling); this theater relief only opens as a **backstop** when there still
+  aren't 2 zones open (e.g. the server is already cold). Set to **1** for the
+  original behavior. Heating is unaffected.
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
@@ -341,12 +347,13 @@ satisfied. The target is clamped between the floor and ceiling.
    `min_changeover` minutes pass (unless no room is still calling the current
    direction). With the default of 3 min, the nursery is served ~3 min after the
    last reversal at worst; set the cooldown to 0 for instant reversal.
-5. **Relief valve + min-open pressure relief.** Force every room damper closed
-   (each switch `on`): `switch.damper_theater` goes **off** (open). Now, **while
-   cooling**, open exactly **one** room damper — the theater should **stay off**
-   (open) because fewer than 2 zones are open. Open a **second** room and the
-   theater goes **on** (closed). (While heating, the theater closes as soon as any
-   one room is open — heating is unaffected.)
+5. **Pressure relief while cooling.** With the server's *Cooling Ride-Along* on:
+   trigger cooling for just the nursery. The **server damper opens too** (its
+   status reads `Riding along (pressure relief) …`) — that's the second zone, so
+   `switch.damper_theater` stays **on** (closed). Force the server cold (below its
+   ride-along floor) so it drops out, leaving one zone — now the theater goes
+   **off** (open) as the backstop. (While heating, ride-along doesn't apply and the
+   theater only opens when every room is closed.)
    - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
      theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
      unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.
@@ -482,6 +489,7 @@ Cooling - 76.0° vs 75.0° target (away)                ← nobody home: held at
 Idle - 71.0° (cool above 72.0°, heat below 68.0°) (day)  ← comfortable, not calling
 Heating - 66.5° vs 68.0° target
 Cooling (yielding to priority) - 76.0° vs 75.0° target (day)  ← damper closed to focus air on the nursery
+Riding along (pressure relief) - 72.0°, taking cool air down to 70.0°  ← server: 2nd zone while cooling
 Idle - 73.0° (not eligible: occupancy/schedule)       ← gated off by occupancy or its window
 Off (disabled)                                        ← enable toggle is off
 No temperature reading                                ← sensor unavailable (fails safe to idle)

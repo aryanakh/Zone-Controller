@@ -254,6 +254,39 @@ blueprint:
               filter:
                 - domain: input_number
 
+    relief_section:
+      name: Cooling Ride-Along (optional)
+      icon: mdi:air-filter
+      collapsed: true
+      input:
+        cool_ride_along:
+          name: Ride along while cooling (pressure relief)
+          description: >
+            While the unit is COOLING, keep this room's damper open even when it
+            isn't calling, so it provides a second airflow path and the system
+            never runs through a single small zone. Best on a room that always
+            benefits from cooling (e.g. a server room), so relief isn't wasted on
+            the theater. It never turns the unit on by itself and never heats;
+            it only rides along on cooling the unit is already doing, down to the
+            floor below.
+          default: false
+          selector:
+            boolean:
+        cool_ride_along_margin:
+          name: Ride-along floor below cool setpoint (deg)
+          description: >
+            How far below its cool setpoint this room may be cooled while riding
+            along. It stops taking ride-along air once it drops this far below its
+            setpoint, so it can't be frozen. Default 4.
+          default: 4.0
+          selector:
+            number:
+              min: 0.0
+              max: 20.0
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
+
     schedule_section:
       name: Scheduled Activation (optional)
       icon: mdi:clock-outline
@@ -390,6 +423,8 @@ variables:
   sleep_cool_setpoint: !input sleep_cool_setpoint
   home_occupied_ref: !input home_occupied_ref
   away_cool_setpoint: !input away_cool_setpoint
+  cool_ride_along: !input cool_ride_along
+  cool_ride_along_margin: !input cool_ride_along_margin
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
@@ -509,10 +544,18 @@ variables:
        or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool']) }}
   # Open only when the room's demand matches the direction the unit delivers AND
   # no higher-priority room is currently being served (see priority yield above).
+  # Cooling ride-along: while the unit is already cooling, keep this room open for
+  # pressure relief even when it isn't calling - down to a floor so it can't be
+  # frozen. It never turns the unit on (raw_demand is still published normally).
+  cool_riding: >
+    {{ cool_ride_along and enable_cool and cool_sp_valid
+       and main_mode in ['cool', 'heat_cool']
+       and temp_valid and temp > (cool_sp - cool_ride_along_margin) }}
   should_open: >
     {{ active and not priority_served and (
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
-         (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
+         (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool']) or
+         cool_riding
        ) }}
   # Which setpoint set is in effect (for the status line).
   sp_tag: "{{ 'away' if away_active else 'sleep' if use_night_sp else 'day' }}"
@@ -524,6 +567,7 @@ variables:
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
     {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ sp_tag }})
     {%- elif raw_demand == 'heat' -%}Heating{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
+    {%- elif cool_riding and not priority_served -%}Riding along (pressure relief) - {{ temp | round(1) }}°, taking cool air down to {{ (cool_sp - cool_ride_along_margin) | round(1) }}°
     {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}) ({{ sp_tag }})
     {%- endif -%}
 
