@@ -287,6 +287,25 @@ blueprint:
               unit_of_measurement: deg
               mode: box
 
+    purge_section:
+      name: Away Circulation Purge (optional)
+      icon: mdi:fan-alert
+      collapsed: true
+      input:
+        purge_until:
+          name: Circulation purge window (input_datetime)
+          description: >
+            Point this at the SAME "Purge-window helper" input_datetime the
+            Coordinator uses. While the coordinator is running an away circulation
+            purge, this room opens its damper (regardless of demand or enable) so
+            air moves through its duct too - discouraging stagnant-air mold /
+            condensation. Leave unset to opt this room out of purges.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+
     schedule_section:
       name: Scheduled Activation (optional)
       icon: mdi:clock-outline
@@ -425,6 +444,7 @@ variables:
   away_cool_setpoint: !input away_cool_setpoint
   cool_ride_along: !input cool_ride_along
   cool_ride_along_margin: !input cool_ride_along_margin
+  purge_until: !input purge_until
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
@@ -551,17 +571,24 @@ variables:
     {{ cool_ride_along and enable_cool and cool_sp_valid
        and main_mode in ['cool', 'heat_cool']
        and temp_valid and temp > (cool_sp - cool_ride_along_margin) }}
+  # Away circulation purge: while the coordinator's purge window is open, force
+  # this room's damper OPEN so the fan can move air through its duct (mold /
+  # condensation prevention), regardless of demand or enable state.
+  purging: >
+    {{ purge_until is string
+       and as_timestamp(now()) < as_timestamp(states(purge_until), 0) }}
   should_open: >
-    {{ active and not priority_served and (
+    {{ purging or (active and not priority_served and (
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
          (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool']) or
          cool_riding
-       ) }}
+       )) }}
   # Which setpoint set is in effect (for the status line).
   sp_tag: "{{ 'away' if away_active else 'sleep' if use_night_sp else 'day' }}"
   # Plain-English explanation of what this room is doing and why (for status_helper).
   room_status: >-
     {%- if bypassed -%}Manual override ON - not controlling this damper
+    {%- elif purging -%}Circulation purge - damper open, fan circulating (mold prevention){% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
     {%- elif not enabled_on -%}Off (disabled)
     {%- elif not temp_valid -%}No temperature reading
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)

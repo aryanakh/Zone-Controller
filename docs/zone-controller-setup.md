@@ -68,6 +68,7 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
 - Full manual override: `input_boolean.zc_bypass`
+- Away circulation purge: `input_datetime.zc_purge_until`
 - `zone.home_wide` (~5 mi)
 
 > The **sleep-mode** and **home-occupied** booleans are **not** created by the
@@ -178,6 +179,12 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 > The theater / bonus room does **not** get a Room Zone automation — its damper
 > is managed only by the coordinator.
 
+> **If you use the Away Circulation Purge** (below), also set on **every** Room
+> Zone: *Away Circulation Purge → Circulation purge window* =
+> `input_datetime.zc_purge_until` (the same helper the coordinator uses). That's
+> what lets each room open its damper during a purge so air moves through its
+> duct. Leave it unset on any room you want to exclude from purges.
+
 ## 4. Create the coordinator automation
 
 Create **one** automation from the **Coordinator** blueprint:
@@ -251,6 +258,22 @@ Create **one** automation from the **Coordinator** blueprint:
 > server room. If the server room must keep cooling while you travel, use
 > **Away** instead of Vacation. A house-mode change is applied on the next
 > safety re-sync (within ~2 min), not instantly.
+- **Away Circulation Purge** *(optional — mold / condensation prevention)*:
+  - Run a circulation purge while away: **on** to enable (default off).
+  - Purge-window helper: `input_datetime.zc_purge_until` — **required.** Point
+    every Room Zone's *Circulation purge window* at this **same** helper.
+  - Purge every: **8** (hours) · Purge duration: **10** (minutes).
+  - Also purge during Vacation: **on** *(recommended — a vacation is the longest
+    the ducts sit unused)*.
+  - Fan-only mode name: **fan_only** *(change only if your unit names it
+    differently)*.
+  - While the house is away (or on vacation) and nothing is calling, the
+    coordinator periodically runs the blower in **fan-only** with **every damper
+    open**, moving air through all the ducts to discourage stagnant-air mold and
+    condensation. It never heats or cools, and it **yields the unit instantly**
+    the moment a room calls or you come home (the window ends and normal control
+    resumes). The status line reads `Circulation purge - fan on, all dampers open
+    (mold prevention) - <mode>`.
 - **Setpoint Force-Run** (optional but recommended — see below):
   - Manage the unit's setpoint: **on**
   - Force-run offset: **2** · Setpoint floor: **60** · Setpoint ceiling: **85**
@@ -381,6 +404,16 @@ satisfied. The target is clamped between the floor and ceiling.
    unit switches to the eco preset but keeps running. Set it to **Vacation** →
    the unit turns off entirely (server room included). Set it back to **Home** →
    the eco preset is restored and normal operation resumes.
+11. **Away circulation purge** *(if enabled).** With the purge on and the house
+   away/vacation and nothing calling, the unit should periodically switch to
+   `fan_only` with **every damper open** — each room's status reads `Circulation
+   purge - damper open, fan circulating …` and the coordinator shows `Circulation
+   purge - fan on, all dampers open (mold prevention)`. To test on demand, set
+   `input_datetime.zc_purge_until` a few minutes into the future by hand — the fan
+   runs and dampers open until it passes, then normal control resumes. Make a room
+   call mid-purge (or come home) and the purge ends immediately, handing the unit
+   back. (To time the cadence without waiting, temporarily lower *Purge every* to
+   1 hour.)
 9. **Force-run.** With force-run enabled, set the central thermostat to a mild
    value (e.g. 72) while a room calls for cooling and the hallway is cooler than
    that. The coordinator should drive the target down (≈ sensed − 2) so the unit

@@ -229,6 +229,15 @@ input_datetime:
     has_time: true
     icon: mdi:timer-sand
 
+  # Away circulation purge: stores when the current fan-only purge window ends.
+  # Point the Coordinator's "Purge-window helper" AND every Room Zone's
+  # "Circulation purge window" at this same helper.
+  zc_purge_until:
+    name: HVAC circulation purge until
+    has_date: true
+    has_time: true
+    icon: mdi:fan-clock
+
 # A wide (~5 mi) zone. Anyone inside it counts as home/approaching.
 # 5 miles ~= 8047 meters.  # TODO: set latitude/longitude to your home.
 zone:

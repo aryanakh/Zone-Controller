@@ -335,6 +335,79 @@ blueprint:
               unit_of_measurement: deg
               mode: box
 
+    purge_section:
+      name: Away Circulation Purge (optional)
+      icon: mdi:fan-alert
+      collapsed: true
+      input:
+        purge_enabled:
+          name: Run a circulation purge while away
+          description: >
+            While the house is away (or on vacation), periodically run the blower
+            in fan-only with every damper open, to move air through all the ducts
+            and discourage stagnant-air mold / condensation. It never heats or
+            cools - it only circulates - and it yields the unit instantly the
+            moment a room calls or you come home. Off by default. Requires the
+            purge-window helper below, and each Room Zone must point its own
+            "Circulation purge window" at that same helper to open its damper.
+          default: false
+          selector:
+            boolean:
+        purge_interval_hours:
+          name: Purge every (hours)
+          description: >
+            How often to run a purge while the house stays away. The first purge
+            runs shortly after the house goes away (or on the next re-sync).
+          default: 8
+          selector:
+            number:
+              min: 1
+              max: 72
+              step: 1
+              unit_of_measurement: h
+              mode: box
+        purge_minutes:
+          name: Purge duration (minutes)
+          description: How long each fan-only purge runs before returning to normal.
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: box
+        purge_include_vacation:
+          name: Also purge during Vacation
+          description: >
+            Include the house-mode "Vacation" state (when the unit is otherwise
+            fully off). Recommended - a vacation is the longest the ducts sit
+            unused, so it's the case that benefits most. When off, purges run only
+            in the Away / presence-away state.
+          default: true
+          selector:
+            boolean:
+        purge_fan_mode:
+          name: Fan-only mode name
+          description: >
+            The hvac_mode used for the purge. Almost all ducted units expose
+            "fan_only"; change this only if yours names it differently.
+          default: fan_only
+          selector:
+            text:
+        purge_until:
+          name: Purge-window helper (input_datetime)
+          description: >
+            An input_datetime (date + time) the coordinator uses to time the purge
+            window (it stores when the current purge ends). REQUIRED for the purge.
+            Point every Room Zone's "Circulation purge window" input at this SAME
+            helper so the rooms open their dampers while the purge is running.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+
     setpoint_section:
       name: Setpoint Force-Run (optional)
       icon: mdi:thermostat
@@ -564,6 +637,12 @@ variables:
   idle_mode: !input idle_mode
   idle_high: !input idle_high
   idle_low: !input idle_low
+  purge_enabled: !input purge_enabled
+  purge_interval_hours: !input purge_interval_hours
+  purge_minutes: !input purge_minutes
+  purge_include_vacation: !input purge_include_vacation
+  purge_fan_mode: !input purge_fan_mode
+  purge_until: !input purge_until
   manage_setpoint: !input manage_setpoint
   run_offset: !input run_offset
   setpoint_floor: !input setpoint_floor
@@ -664,6 +743,29 @@ variables:
             or (main_dir == 'cool' and cap_sensed > idle_high - 0.5)) }}
   # A room's demand wins; otherwise the cap can force cooling (in "cap" mode).
   winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
+  # --- away circulation purge ---
+  # While away and nothing is calling, periodically run the fan with every damper
+  # open (mold / condensation prevention). purge_until stores when the current
+  # window ends; the last window START is (purge_until - duration), so the next
+  # purge is due one interval after that. An unset helper reads as 0 => due now,
+  # so the first purge fires as soon as the house is away.
+  house_away: "{{ hm_vacation or hm_away or not home }}"
+  now_ts: "{{ as_timestamp(now()) }}"
+  purge_until_ts: "{{ as_timestamp(states(purge_until), 0) if purge_until is string else 0 }}"
+  purge_window_s: "{{ (purge_minutes | float(0)) * 60 }}"
+  purge_interval_s: "{{ (purge_interval_hours | float(0)) * 3600 }}"
+  purge_running: "{{ purge_enabled and purge_until is string and now_ts < purge_until_ts }}"
+  purge_next_due_ts: "{{ (purge_until_ts - purge_window_s) + purge_interval_s }}"
+  purge_due: "{{ now_ts >= purge_next_due_ts }}"
+  # Eligible this cycle: feature on, helper present, house away (honouring the
+  # vacation opt-in), and NO room / cap is calling (a real demand always wins).
+  purge_state_ok: >
+    {{ purge_enabled and purge_until is string and house_away
+       and (purge_include_vacation or not hm_vacation)
+       and winner_dir == 'none' }}
+  purge_now: "{{ purge_state_ok and (purge_running or purge_due) }}"
+  purge_start: "{{ purge_now and not purge_running }}"
+  purge_new_until_ts: "{{ now_ts + purge_window_s }}"
   # Is the unit already holding the idle heat_cool band (so we can skip re-commanding)?
   main_ttl: "{{ state_attr(main_climate, 'target_temp_low') }}"
   main_tth: "{{ state_attr(main_climate, 'target_temp_high') }}"
@@ -797,6 +899,9 @@ variables:
   status_mode: >-
     {% if hm_vacation %}Vacation{% elif want_eco %}Eco Away{% elif not home
     %}Away{% elif is_night %}Home Night{% else %}Home Day{% endif %}
+  # Status line shown while an away circulation purge is running.
+  purge_status_msg: >-
+    Circulation purge - fan on, all dampers open (mold prevention) - {{ status_mode }}
   # Plain-English setpoint / force-run outcome (empty when it isn't managing).
   status_sp: >-
     {% if manage_setpoint and manual_hard %}manual override - thermostat left
@@ -858,6 +963,73 @@ action:
               value: "Manual override ON - coordinator not controlling the unit"
   - condition: template
     value_template: "{{ not bypassed }}"
+
+  # --- 0.5 Away circulation purge --------------------------------------------
+  # While the house is away and nothing is calling, periodically run the blower in
+  # fan-only with every damper open, to move air through all the ducts (stagnant-
+  # air mold / condensation prevention). The coordinator runs the fan and opens
+  # the relief damper; each Room Zone opens its own damper by watching the same
+  # purge-window helper. It yields instantly when a room calls (winner_dir != none
+  # ends eligibility) or when you come home.
+  - choose:
+      # Purge running or due this cycle -> circulate.
+      - conditions:
+          - condition: template
+            value_template: "{{ purge_now }}"
+        sequence:
+          # Stamp a fresh window when starting (written BEFORE switching the fan,
+          # so rooms waking on the mode change already read the new window).
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ purge_start }}"
+                sequence:
+                  - service: input_datetime.set_datetime
+                    target:
+                      entity_id: !input purge_until
+                    data:
+                      timestamp: "{{ purge_new_until_ts }}"
+          # Open the relief / theater damper (rooms open their own dampers).
+          - service: switch.turn_off
+            target:
+              entity_id: !input relief_damper
+          # Run the blower in fan-only (no heating or cooling).
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ main_state != purge_fan_mode }}"
+                sequence:
+                  - service: climate.set_hvac_mode
+                    target:
+                      entity_id: !input main_climate
+                    data:
+                      hvac_mode: "{{ purge_fan_mode }}"
+          # Status line (only when it changed).
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ status_helper is string and states(status_helper) != purge_status_msg }}"
+                sequence:
+                  - service: input_text.set_value
+                    target:
+                      entity_id: !input status_helper
+                    data:
+                      value: "{{ purge_status_msg }}"
+      # A window is open but conditions no longer hold (a room called, or we came
+      # home) -> end the window NOW so the rooms resume normal damper control.
+      - conditions:
+          - condition: template
+            value_template: "{{ purge_running and not purge_now }}"
+        sequence:
+          - service: input_datetime.set_datetime
+            target:
+              entity_id: !input purge_until
+            data:
+              timestamp: "{{ now_ts }}"
+  # If purging this cycle, STOP here - leave the unit in fan-only and skip the
+  # normal direction / eco / setpoint logic below.
+  - condition: template
+    value_template: "{{ not purge_now }}"
 
   # --- 1. Theater damper: guest supply and/or pressure relief -----------------
   # Open (switch OFF) to serve the guest room (guest mode) or as the relief valve

@@ -114,7 +114,12 @@ Runs once for the whole house. It:
   `Vacation` turns the unit off;
 - applies a configurable **idle backstop** when no room is calling — off, a
   cooling-only high cap, or a `heat_cool` safety band (default 64–76 °F) that
-  keeps the whole house between a low and high limit.
+  keeps the whole house between a low and high limit;
+- optionally runs an **away circulation purge** — periodically (default every 8 h)
+  runs the blower in fan-only for a few minutes with every damper open while the
+  house is away, so air moves through all the ducts to discourage stagnant-air
+  mold / condensation; it yields the unit instantly when a room calls or you
+  return.
 
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints plus theater guest-room
@@ -227,6 +232,11 @@ Full step-by-step field values and a verification checklist are in
 - **Idle backstop** — when no room is calling, choose what the unit does: turn
   off, hold a cooling-only high cap, or hold a `heat_cool` safety band (default
   64–76 °F) so the whole house never drifts too hot *or* too cold.
+- **Away circulation purge** — while the house is away (or on vacation),
+  periodically run the blower in fan-only with every damper open to move air
+  through all the ducts and discourage stagnant-air mold / condensation. It never
+  heats or cools, and it yields the unit instantly the moment a room calls or you
+  come home. Off by default; interval and duration are configurable.
 - **Theater guest-room mode** — a toggle turns the theater/bonus room from a
   passive relief valve into a conditioned bedroom (its own sensor + setpoints,
   with a sleep target), while it still falls back to relief when not in use.
