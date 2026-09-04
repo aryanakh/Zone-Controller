@@ -245,10 +245,10 @@ Full step-by-step field values and a verification checklist are in
   room, then reopen. It can be scoped to *urgent* cases only (via that room's
   urgent-demand output) so a room yields just when, say, the nursery is far past
   its target, and both share again once it recovers.
-- **Status output** — the coordinator writes a one-line summary of every decision
-  to an optional `input_text` (e.g. `Starting cooling - set thermostat to 72° -
-  Home`), updated only when the decision changes, so you can see at a glance what
-  it did and why.
+- **Status output** — the coordinator writes a compact one-line summary of every
+  decision to an optional `input_text` (e.g. `Cooling: Master bedroom · set 68°
+  (hall 70°) · Home Night`), updated only when the decision changes, so you can
+  see at a glance what it did and why.
 - **Pressure relief** — the theater damper opens automatically so the duct is
   never over-pressurized; while cooling it keeps a minimum number of zones open
   (default 2) so the unit never runs through a single small zone.

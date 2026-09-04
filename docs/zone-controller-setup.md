@@ -209,7 +209,7 @@ Create **one** automation from the **Coordinator** blueprint:
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
   — the coordinator writes a one-line summary of every decision here, e.g.
-  `Starting cooling - set thermostat to 72° - Home`. Add it to a dashboard
+  `Cooling: Master bedroom · set 68° (hall 70°) · Home Night`. Add it to a dashboard
   (or just watch it in Developer Tools → States) to see exactly what the
   coordinator did and why on each run. See **Reading the status line** below.
 - Full manual override / bypass *(optional)*: `input_boolean.zc_bypass` — while on,
@@ -441,71 +441,62 @@ all_others_closed: {{ zone_dampers | reject('is_state','off') | list | count == 
 ### Reading the status line
 
 If you wired up the optional `input_text.zc_status` helper, the coordinator
-describes what it decided in plain English. It **updates only when the decision
-changes** (not every cycle), so use the entity's *last changed* time to see when
-the coordinator last acted. Format:
+writes a compact, scannable one-liner of what it decided. It **updates only when
+the decision changes** (not every cycle), so use the entity's *last changed* time
+to see when the coordinator last acted. Format — three parts joined by ` · `:
 
 ```
-<what the unit is doing> - <thermostat action> - <house mode>[ - cooling: ...][ - heating: ...]
+<action + room(s)> · <setpoint> · <house mode>
 ```
 
-The **thermostat action** part only appears when Setpoint Force-Run is enabled.
-The **cooling:/heating:** lists name the rooms currently calling in each
-direction (from the demand helpers' friendly names, minus the " demand" suffix);
-each is shown only when at least one room is calling that way.
+The **setpoint** part only appears when Setpoint Force-Run is actively managing
+the target.
 
-**What the unit is doing:**
-- `Starting cooling` / `Starting heating` — unit was off (or idling) and a room called.
-- `Cooling` / `Heating` — already running the right direction, left it.
-- `Switching to cooling` / `Switching to heating` — reversed for a higher-priority room.
-- `Waiting to switch to heating (compressor cooldown 1/3 min)` — a reversal is
-  wanted but the compressor cooldown is blocking it (1 of 3 min elapsed).
-- `Off - no room calling` — nothing is calling and idle behavior is "off".
-- `Idle - holding 64-76° band` — nothing is calling and idle behavior is "hold band".
-- `Holding 64-76° band` (with mode `Eco Away`) — nobody home: holding the wide
-  band instead of cooling to setpoint, to save power.
-- `Off - forced (vacation)` / `Off - forced (away)` — house mode Vacation, or
-  away with the turn-off action.
-- `... (hallway over 76°)` — cooling only because the hallway passed the cap (no
-  room asked), e.g. `Starting cooling (hallway over 76°)`.
+**Action + room(s)** — the action, with the room(s) it's serving merged in (no
+separate "cooling:" list):
+- `Cooling: Master bedroom` / `Heating: Nursery` — running in that direction for
+  the named room(s); multiple rooms are comma-separated.
+- `Cooling · hallway over 76°` — cooling only because the hallway passed the cap
+  (no room asked), so there's no room name.
+- `Waiting to cool · cooldown 1/3m: Nursery` — a reversal is wanted for the
+  nursery but the compressor cooldown is blocking it (1 of 3 min elapsed).
+- `Idle · 64-76° band` — nothing is calling and idle behavior is "hold band".
+- `Off · no demand` — nothing is calling and idle behavior is "off".
+- `Off` — the unit is forced off (see the mode: `Vacation`, or `Away` with the
+  turn-off action).
 
-**Thermostat action** (force-run):
-- `thermostat forced to 67° (hallway is 72°, pushed below it so the unit keeps
-  running - this is a lever, not the room target)` — the central thermostat
-  senses the **hallway**, so to make the unit run for a room the coordinator
-  pushes the setpoint **below** the hallway (for cooling) or **above** it (for
-  heating). The number is a *control lever*, **not** the temperature any room is
-  aimed at — each room is served by its damper opening/closing. So "67° while the
-  hallway reads 72°" just means "keep cooling"; it does **not** mean the house is
-  being cooled to 67.
-- `manual override - thermostat left alone` — the hard manual override toggle is on.
-- `recent manual change - leaving thermostat alone` — only if you enabled the
-  (off-by-default) auto manual-edit grace.
+**Setpoint** (force-run):
+- `set 68° (hall 70°)` — the coordinator pushed the thermostat target to **68**
+  while the hallway (which the thermostat senses) reads **70**. This is a *control
+  lever* to keep the unit running — **not** the temperature any room is aimed at.
+  Each room is served by its own damper; "68° while the hallway reads 70°" just
+  means "keep cooling", it does **not** mean the house is being cooled to 68.
+- `manual setpoint` — the hard manual override toggle is on; the coordinator isn't
+  touching the target.
+- `manual change - holding` — only if you enabled the (off-by-default) auto
+  manual-edit grace.
 
-**House mode:**
-- `Home Day` — home, outside the night window.
-- `Home Night` — home, inside the night window (or the night/sleep toggle is on).
-- `Eco Away` — nobody home and the away action is the eco preset.
-- `Away` — nobody home (away action is "do nothing" or "turn off").
-- `Vacation` — house-mode selector set to Vacation.
-
-The Day/Night split comes from the coordinator's **Night starts/ends at** times
-(default 21:00 → 07:00) plus the optional **Night/sleep toggle** — both are
-label-only and change no conditioning.
+**House mode:** `Home Day` · `Home Night` (inside the night window, or the
+night/sleep toggle is on) · `Eco Away` (nobody home, eco action) · `Away` (nobody
+home, "do nothing"/"turn off" action) · `Vacation` (house-mode selector). The
+Day/Night split comes from the **Night starts/ends at** times (default 21:00 →
+07:00) plus the optional **Night/sleep toggle** — both label-only.
 
 Examples:
 
 ```
-Cooling - thermostat forced to 67° (hallway is 72°, pushed below it so the unit keeps running - this is a lever, not the room target) - Home Day - cooling: Master bedroom
-Waiting to switch to heating (compressor cooldown 1/3 min) - Home Day - heating: Nursery - cooling: Master bedroom
-Idle - holding 64-76° band - Home Night
-Holding 64-76° band - Eco Away
-Off - forced (vacation) - Vacation
+Cooling: Master bedroom · set 68° (hall 70°) · Home Night
+Cooling: Nursery, Master bedroom · set 68° (hall 71°) · Eco Away
+Waiting to cool · cooldown 1/3m: Nursery · Home Day
+Idle · 64-76° band · Home Night
+Off · no demand · Home Day
+Off · Vacation
+Circulation purge - fan on, all dampers open (mold prevention) - Away
 ```
 
 If the status line **never updates**, the coordinator automation itself isn't
 running — check that it's enabled and look at its trace. If it shows
-`Off - no room calling` while a room is hot, that room isn't publishing demand
+`Off · no demand` while a room is hot, that room isn't publishing demand
 (check its demand `input_text` and temp sensor).
 
 ### Reading a room's status
