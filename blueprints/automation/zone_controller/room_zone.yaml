@@ -405,6 +405,19 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        yield_day_only:
+          name: Only yield during the day (not at night)
+          description: >
+            When on, this room SUSPENDS its priority yield while it is on its
+            night / sleep setpoint (sleep toggle on, or inside its pre-cool window)
+            - so at night it keeps its damper open and serves itself (and provides
+            the relief zone) instead of yielding. Use this on the master bedroom so
+            it focuses air on the nursery during the day, but at night stays open
+            as the relief path until it reaches its own sleep target. No effect if
+            no yield is configured above.
+          default: false
+          selector:
+            boolean:
         urgent_helper:
           name: Urgent-demand output for THIS room (input_text, optional)
           description: >
@@ -466,6 +479,7 @@ variables:
   early_start_boolean: !input early_start_boolean
   early_start_minutes: !input early_start_minutes
   priority_demand: !input priority_demand
+  yield_day_only: !input yield_day_only
   urgent_helper: !input urgent_helper
   urgent_margin: !input urgent_margin
   # --- derived state ---
@@ -574,9 +588,14 @@ variables:
   # fires while the priority room is actually getting air, so we never yield
   # during a compressor cooldown while the unit is still serving THIS room.
   priority_dir: "{{ states(priority_demand) if priority_demand is string else 'none' }}"
+  # Day-only yield: suspend the yield while this room is on its night/sleep
+  # setpoint, so at night it keeps its damper open (serving itself + relief)
+  # instead of yielding to the priority room.
+  yield_suspended: "{{ yield_day_only and use_night_sp }}"
   priority_served: >
-    {{ (priority_dir == 'cool' and main_mode in ['cool', 'heat_cool'])
-       or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool']) }}
+    {{ not yield_suspended and (
+         (priority_dir == 'cool' and main_mode in ['cool', 'heat_cool'])
+         or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool'])) }}
   # Open only when the room's demand matches the direction the unit delivers AND
   # no higher-priority room is currently being served (see priority yield above).
   # Cooling ride-along: while the unit is already cooling, keep this room open for

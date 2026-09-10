@@ -256,11 +256,12 @@ Full step-by-step field values and a verification checklist are in
   higher-priority rooms are already calling, it stays closed so the full airflow
   goes to them until one reaches temperature; the theater damper is the automatic
   last-resort backstop.
-- **Staged night cooldown** *(optional)* — at night the relief room can be held
-  back further for a strict priority cascade: cool the nursery first, hand off to
-  the master as the nursery nears its target, then let the server join as the
-  master nears its target — so each bedroom gets concentrated airflow in turn. A
-  genuinely hot server still opens on its own.
+- **Day-only yield** *(optional)* — a room can be told to yield to a
+  higher-priority room only during the day. At night it keeps its damper open and
+  serves as the cooling-relief zone instead — e.g. the master focuses air on the
+  nursery by day, but at night stays open (cooling toward its own sleep target)
+  until satisfied, at which point the server becomes the relief. The theater is
+  never used for cooling relief unless the server truly can't help.
 - **Fail-open** — normally-open dampers spring open on power loss.
 - **100% local** — no cloud dependency.
 
