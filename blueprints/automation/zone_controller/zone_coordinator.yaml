@@ -133,11 +133,34 @@ blueprint:
             when it's genuinely needed - not while the nursery and master alone
             already provide enough open zones. This is what keeps the full airflow
             on the bedrooms until one of them reaches temperature.
+            AT NIGHT, if "Night staging: urgent helpers" below is set, this flag
+            switches to a stricter rule instead (see that input).
           default: {}
           selector:
             entity:
               filter:
                 - domain: input_boolean
+        relief_wait_urgent:
+          name: Night staging - urgent helpers to wait for (optional)
+          description: >
+            Optional. Point this at the URGENT-demand helpers of the rooms above
+            the relief room (e.g. the nursery's and master's urgent helpers). AT
+            NIGHT (see the Home/Away night window / toggle), the coordinator holds
+            the relief flag OFF - so the relief room (server) stays closed - while
+            ANY of these is calling, i.e. while a higher-priority room is still
+            more than its urgent margin from target. Once they are all within
+            margin (or satisfied), the flag turns on and the relief room rides
+            along. This gives a staged night cooldown: nursery focus, then master
+            focus, then - as the master nears its target - the server joins. A
+            genuinely hot server still opens on its own (it's a real caller then).
+            During the DAY this input is ignored and the flag uses the simple
+            "need a 2nd zone" rule above. Leave unset to use that rule day + night.
+          default: {}
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: input_text
         min_changeover:
           name: Compressor reversal cooldown (minutes)
           description: >
@@ -635,6 +658,7 @@ variables:
   relief_damper: !input relief_damper
   min_open_zones_cool: !input min_open_zones_cool
   cool_relief_helper: !input cool_relief_helper
+  relief_wait_urgent: !input relief_wait_urgent
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
   status_helper: !input status_helper
@@ -813,9 +837,25 @@ variables:
   # of these than the minimum, so the bedrooms keep the full airflow until one of
   # them reaches temperature and drops out. Published to cool_relief_helper.
   cool_callers: "{{ zone_demands | select('is_state', 'cool') | list | count }}"
+  cooling_active: "{{ main_state in ['cool', 'heat_cool'] or winner_dir == 'cool' }}"
+  # Night staging: the urgent helpers of the rooms above the relief room. Unset =
+  # empty list. "Any still urgent" means a higher-priority room is still more than
+  # its urgent margin from target, so the relief room must wait (stay closed).
+  relief_wait_list: >
+    {{ relief_wait_urgent
+       if (relief_wait_urgent is not mapping and relief_wait_urgent is not string)
+       else [] }}
+  relief_wait_any_urgent: "{{ relief_wait_list | select('is_state', 'cool') | list | count > 0 }}"
+  night_staging: "{{ is_night and (relief_wait_list | count > 0) }}"
+  # The relief flag: AT NIGHT (with a staging list) it turns on only once no
+  # higher-priority room is still urgent - so the server holds until the bedrooms
+  # near their targets, then joins. Otherwise (day, or no list) it uses the simple
+  # "need a 2nd open zone" rule.
   cool_relief_needed: >
-    {{ (main_state in ['cool', 'heat_cool'] or winner_dir == 'cool')
-       and cool_callers < min_open_zones_cool }}
+    {{ cooling_active and (
+         (not relief_wait_any_urgent) if night_staging
+         else (cool_callers < min_open_zones_cool)
+       ) }}
   # Pressure relief is needed when: every room is closed (any mode), OR - while
   # cooling - fewer than the minimum zones are open (open the theater as an extra
   # path so we never run through a single small zone).

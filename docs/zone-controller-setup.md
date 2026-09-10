@@ -62,8 +62,8 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
   `master_enabled`, `theater_guest_mode`
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
-  `theater_demand`; per-room status: `nursery_status`, `master_status`,
-  `server_status`
+  `theater_demand`; urgent helpers: `nursery_urgent`, `master_urgent`; per-room
+  status: `nursery_status`, `master_status`, `server_status`
 - `input_datetime.zc_last_changeover`
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
@@ -133,6 +133,11 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
   it at `input_text.nursery_demand` instead if you want the master to yield
   *whenever* the nursery is served, not just in extreme cases; leave unset for no
   yielding at all.)
+- **Urgent-demand output** *(for night staging)*: *"Urgent-demand output for THIS
+  room"* → `input_text.master_urgent` · *Urgent margin* → **2**. The master
+  publishes `cool` here while it's more than 2° past its target, and `none` once
+  it's within 2°. The coordinator uses this (see its *Night staging* input) to
+  hold the server closed until the master nears its target at night.
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.<your_sleep_mode>`
 - Sleep / pre-cool cool setpoint: `input_number.master_sleep_cool_sp`
@@ -181,6 +186,11 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
   > **Leave the gate unset** if you'd rather the server ride along on *every*
   > cooling cycle (the older behavior). With it set to `zc_cool_relief`, the
   > bedrooms keep undivided airflow until one of them reaches temperature.
+  >
+  > **At night** (with the coordinator's *Night staging* configured, below) this
+  > same flag/gate becomes a staged cooldown: the server stays closed through the
+  > nursery-focus and master-focus phases, and only rides along once the master is
+  > within ~2° of its target — no extra server wiring needed.
 - **Priority Yield:** *leave unset.* The server must never stop getting air, so it
   should not yield to the nursery (or any room).
 
@@ -219,6 +229,20 @@ Create **one** automation from the **Coordinator** blueprint:
   *"Ride along only while this is on"* at it (above) so the server rides along
   **only when the second zone is genuinely needed** — keeping the full airflow on
   the nursery and master until one of them reaches temperature.
+- Night staging - urgent helpers to wait for *(optional)*: add
+  `input_text.nursery_urgent` and `input_text.master_urgent`. **At night** (see
+  the night window / toggle below), `zc_cool_relief` switches to a stricter rule:
+  it stays **off** — server closed — while *either* the nursery or the master is
+  still urgent (>2° from target), and only turns **on** once both are within
+  margin (or satisfied). That produces the staged night cooldown: **nursery focus
+  → master focus → server joins** as the master nears its target. A genuinely hot
+  server still opens on its own (it's a real caller then). During the day this is
+  ignored and the simple "need a 2nd zone" rule applies. Leave unset to use that
+  rule day and night.
+  > **During the deep-focus phases** (a bedroom still >2° out with the others
+  > held closed) only one room is open, so the **theater** briefly opens as the
+  > pressure-relief 2nd zone — the server is intentionally held back until the
+  > master nears target. That's the trade-off for a strict staged cooldown.
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
@@ -397,6 +421,13 @@ satisfied. The target is clamped between the floor and ceiling.
      one zone — now the theater goes **off** (open) as the backstop.
    (While heating, ride-along doesn't apply and the theater only opens when every
    room is closed.)
+   - **Night staging.** With the night window/toggle active and *Night staging*
+     wired (`nursery_urgent` + `master_urgent`): make all three want cool. While
+     the nursery is >2° over, only it is open (master yields, server held) — the
+     theater covers pressure. Bring the nursery within 2°: the **master opens**.
+     Bring the master within 2° (`master_urgent` → `none`): `zc_cool_relief` turns
+     **on** and the **server joins**. At any point make the server itself hot
+     (over its setpoint) → it opens on its own regardless of the staging.
    - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
      theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
      unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.

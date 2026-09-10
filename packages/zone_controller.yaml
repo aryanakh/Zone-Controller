@@ -195,6 +195,14 @@ input_text:
     initial: none
     icon: mdi:baby-carriage-off
 
+  # Master "urgent" demand - set when the master is more than its urgent margin
+  # past its setpoint. Used for night staging: the coordinator holds the server's
+  # ride-along until the master is within margin of its target (this helper clears).
+  master_urgent:
+    name: Master bedroom urgent demand
+    initial: none
+    icon: mdi:bed-alert
+
   # Theater demand (guest-room mode). Written by the Coordinator itself; add it to
   # the coordinator's demand list at the priority you want the guest room to have.
   theater_demand:
