@@ -122,6 +122,22 @@ blueprint:
               max: 4
               step: 1
               mode: box
+        cool_relief_helper:
+          name: Cooling-relief-needed output (input_boolean, optional)
+          description: >
+            Optional input_boolean the coordinator turns ON while the unit is
+            cooling AND fewer than "Minimum open zones while cooling" rooms are
+            actually CALLING for cool - i.e. an extra zone is needed for pressure
+            relief. Point a relief room's Room Zone "Ride along only while this is
+            on" at this helper so that room (e.g. the server) opens for relief ONLY
+            when it's genuinely needed - not while the nursery and master alone
+            already provide enough open zones. This is what keeps the full airflow
+            on the bedrooms until one of them reaches temperature.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
         min_changeover:
           name: Compressor reversal cooldown (minutes)
           description: >
@@ -618,6 +634,7 @@ variables:
   zone_dampers: !input zone_dampers
   relief_damper: !input relief_damper
   min_open_zones_cool: !input min_open_zones_cool
+  cool_relief_helper: !input cool_relief_helper
   min_changeover: !input min_changeover
   changeover_helper: !input changeover_helper
   status_helper: !input status_helper
@@ -790,6 +807,15 @@ variables:
   # How many room dampers are currently open (off = open). Used to keep enough
   # airflow paths open while cooling so static pressure stays reasonable.
   open_room_count: "{{ zone_dampers | select('is_state', 'off') | list | count }}"
+  # How many rooms are actually CALLING for cool right now (demand-based, so it
+  # doesn't depend on damper feedback - a satisfied room riding along is NOT
+  # counted). Relief (a ride-along room) is only "needed" while cooling with fewer
+  # of these than the minimum, so the bedrooms keep the full airflow until one of
+  # them reaches temperature and drops out. Published to cool_relief_helper.
+  cool_callers: "{{ zone_demands | select('is_state', 'cool') | list | count }}"
+  cool_relief_needed: >
+    {{ (main_state in ['cool', 'heat_cool'] or winner_dir == 'cool')
+       and cool_callers < min_open_zones_cool }}
   # Pressure relief is needed when: every room is closed (any mode), OR - while
   # cooling - fewer than the minimum zones are open (open the theater as an extra
   # path so we never run through a single small zone).
@@ -1254,3 +1280,25 @@ action:
               entity_id: !input guest_demand_helper
             data:
               value: "{{ guest_demand }}"
+
+  # --- 7. Cooling-relief flag (optional) -------------------------------------
+  # Turn the relief flag ON while cooling with fewer than the minimum rooms
+  # actually calling, so a designated relief room (e.g. the server) rides along
+  # ONLY when it's genuinely needed as the extra open zone - keeping the full
+  # airflow on the bedrooms until one of them reaches temperature. On/off only
+  # when it changes, so the helper doesn't churn.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ cool_relief_helper is string and cool_relief_needed and not is_state(cool_relief_helper, 'on') }}"
+        sequence:
+          - service: input_boolean.turn_on
+            target:
+              entity_id: !input cool_relief_helper
+      - conditions:
+          - condition: template
+            value_template: "{{ cool_relief_helper is string and not cool_relief_needed and is_state(cool_relief_helper, 'on') }}"
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: !input cool_relief_helper

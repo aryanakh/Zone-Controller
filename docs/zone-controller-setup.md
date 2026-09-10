@@ -68,6 +68,7 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
 - Full manual override: `input_boolean.zc_bypass`
+- Cooling relief flag: `input_boolean.zc_cool_relief`
 - Away circulation purge: `input_datetime.zc_purge_until`
 - `zone.home_wide` (~5 mi)
 
@@ -168,11 +169,18 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 - Heat setpoint: *(leave unset)* · Enable heating: **off**
 - Zone mode: **Always on**
 - **Cooling Ride-Along:** *"Ride along while cooling"* = **on** · *Ride-along floor
-  below cool setpoint* = **4**. This makes the server the preferred second airflow
-  path: whenever the unit is cooling for another room, the server damper stays open
-  (down to ~4° below its setpoint), so cooling relief goes to the server (which
-  always benefits) instead of being wasted on the theater. The theater then only
-  opens as a last resort (e.g. the server is already cold).
+  below cool setpoint* = **4** · **_"Ride along only while this is on"_** =
+  `input_boolean.zc_cool_relief`. This makes the server the preferred second
+  airflow path — **but only when a second path is actually needed.** While the
+  nursery and master are *both* calling (2 zones already open), the server stays
+  **closed** so the full airflow goes to the bedrooms. The moment only one room is
+  left calling, the coordinator turns `zc_cool_relief` on and the server rides
+  along (down to ~4° below its setpoint) as the second zone — cooling relief the
+  server benefits from, instead of wasting it on the theater. The theater only
+  opens as a last resort (e.g. the server is already below its floor).
+  > **Leave the gate unset** if you'd rather the server ride along on *every*
+  > cooling cycle (the older behavior). With it set to `zc_cool_relief`, the
+  > bedrooms keep undivided airflow until one of them reaches temperature.
 - **Priority Yield:** *leave unset.* The server must never stop getting air, so it
   should not yield to the nursery (or any room).
 
@@ -205,6 +213,12 @@ Create **one** automation from the **Coordinator** blueprint:
   cooling); this theater relief only opens as a **backstop** when there still
   aren't 2 zones open (e.g. the server is already cold). Set to **1** for the
   original behavior. Heating is unaffected.
+- Cooling-relief-needed output *(optional but recommended)*:
+  `input_boolean.zc_cool_relief` — the coordinator turns this **on** only while
+  cooling with fewer than the minimum rooms actually calling. Point the server's
+  *"Ride along only while this is on"* at it (above) so the server rides along
+  **only when the second zone is genuinely needed** — keeping the full airflow on
+  the nursery and master until one of them reaches temperature.
 - Compressor reversal cooldown: **3** (minutes)
 - Last-changeover helper: `input_datetime.zc_last_changeover`
 - Status / decision output *(optional but recommended)*: `input_text.zc_status`
@@ -370,13 +384,19 @@ satisfied. The target is clamped between the floor and ceiling.
    `min_changeover` minutes pass (unless no room is still calling the current
    direction). With the default of 3 min, the nursery is served ~3 min after the
    last reversal at worst; set the cooldown to 0 for instant reversal.
-5. **Pressure relief while cooling.** With the server's *Cooling Ride-Along* on:
-   trigger cooling for just the nursery. The **server damper opens too** (its
-   status reads `Riding along (pressure relief) …`) — that's the second zone, so
-   `switch.damper_theater` stays **on** (closed). Force the server cold (below its
-   ride-along floor) so it drops out, leaving one zone — now the theater goes
-   **off** (open) as the backstop. (While heating, ride-along doesn't apply and the
-   theater only opens when every room is closed.)
+5. **Pressure relief while cooling.** With the server's *Cooling Ride-Along* on
+   and its gate pointed at `input_boolean.zc_cool_relief`:
+   - Make **both** the nursery and master call for cool. Two rooms are open, so
+     `zc_cool_relief` stays **off**, the **server stays closed** (its status reads
+     `Idle …`, not riding along), and all the air goes to the two bedrooms.
+   - Now satisfy the master (or the nursery) so only **one** room is calling.
+     Within a re-sync `zc_cool_relief` flips **on**, the **server damper opens**
+     (status `Riding along (pressure relief) …`) as the second zone, and
+     `switch.damper_theater` stays **on** (closed).
+   - Force the server cold (below its ride-along floor) so it drops out, leaving
+     one zone — now the theater goes **off** (open) as the backstop.
+   (While heating, ride-along doesn't apply and the theater only opens when every
+   room is closed.)
    - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
      theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
      unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.

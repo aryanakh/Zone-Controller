@@ -249,9 +249,13 @@ Full step-by-step field values and a verification checklist are in
   decision to an optional `input_text` (e.g. `Cooling: Master bedroom · set 68°
   (hall 70°) · Home Night`), updated only when the decision changes, so you can
   see at a glance what it did and why.
-- **Pressure relief** — the theater damper opens automatically so the duct is
-  never over-pressurized; while cooling it keeps a minimum number of zones open
-  (default 2) so the unit never runs through a single small zone.
+- **Pressure relief** — the duct is never over-pressurized: while cooling the
+  system keeps a minimum number of zones open (default 2) so the unit never runs
+  through a single small zone. A designated room (e.g. the server) rides along as
+  the useful second zone, but **only when it's actually needed** — while enough
+  higher-priority rooms are already calling, it stays closed so the full airflow
+  goes to them until one reaches temperature; the theater damper is the automatic
+  last-resort backstop.
 - **Fail-open** — normally-open dampers spring open on power loss.
 - **100% local** — no cloud dependency.
 

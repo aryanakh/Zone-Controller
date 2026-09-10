@@ -162,6 +162,14 @@ input_boolean:
     name: HVAC full manual override (bypass)
     icon: mdi:hand-back-right-off
 
+  # Cooling-relief-needed flag: the coordinator turns this ON while cooling with
+  # fewer than the minimum rooms calling, so a relief room (e.g. the server) rides
+  # along ONLY when it's actually needed. Point the coordinator's "Cooling-relief-
+  # needed output" and the server's "Ride along only while this is on" at this.
+  zc_cool_relief:
+    name: HVAC cooling relief needed
+    icon: mdi:air-filter
+
 # Per-room raw demand (heat / cool / none), written by the Room Zone blueprint
 # and read by the Coordinator in priority order.
 input_text:

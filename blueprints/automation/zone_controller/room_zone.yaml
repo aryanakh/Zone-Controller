@@ -286,6 +286,20 @@ blueprint:
               step: 0.5
               unit_of_measurement: deg
               mode: box
+        ride_along_gate:
+          name: Ride along only while this is on (optional)
+          description: >
+            Optional input_boolean - point it at the Coordinator's "Cooling-relief-
+            needed output" helper. When set, this room rides along ONLY while that
+            helper is on (i.e. the coordinator says an extra open zone is actually
+            needed) - so it stays closed while enough higher-priority rooms are
+            already calling, keeping the full airflow on them until one reaches
+            temperature. Leave unset to ride along on every cooling cycle.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     purge_section:
       name: Away Circulation Purge (optional)
@@ -444,6 +458,7 @@ variables:
   away_cool_setpoint: !input away_cool_setpoint
   cool_ride_along: !input cool_ride_along
   cool_ride_along_margin: !input cool_ride_along_margin
+  ride_along_gate: !input ride_along_gate
   purge_until: !input purge_until
   active_after: !input active_after
   active_until: !input active_until
@@ -567,8 +582,13 @@ variables:
   # Cooling ride-along: while the unit is already cooling, keep this room open for
   # pressure relief even when it isn't calling - down to a floor so it can't be
   # frozen. It never turns the unit on (raw_demand is still published normally).
+  # If a ride-along gate is configured, only ride along while it is on (i.e. the
+  # coordinator says an extra open zone is actually needed) - so the room stays
+  # closed while enough higher-priority rooms already provide the open zones.
+  ride_along_allowed: >
+    {{ ride_along_gate is not string or is_state(ride_along_gate, 'on') }}
   cool_riding: >
-    {{ cool_ride_along and enable_cool and cool_sp_valid
+    {{ cool_ride_along and ride_along_allowed and enable_cool and cool_sp_valid
        and main_mode in ['cool', 'heat_cool']
        and temp_valid and temp > (cool_sp - cool_ride_along_margin) }}
   # Away circulation purge: while the coordinator's purge window is open, force
