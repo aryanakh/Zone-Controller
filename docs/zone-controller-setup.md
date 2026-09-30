@@ -60,7 +60,7 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
   `server_cool_sp`, `master_cool_sp` / `master_sleep_cool_sp` /
   `master_away_cool_sp`, `theater_cool_sp` / `theater_sleep_cool_sp`
 - Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
-  `master_enabled`, `theater_guest_mode`
+  `master_enabled`, `theater_guest_mode`, `master_boost`
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
   `theater_demand`; urgent helper: `nursery_urgent`; per-room status:
   `nursery_status`, `master_status`, `server_status`
@@ -141,6 +141,12 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 - Zone mode: **Occupancy** · Occupancy sensor: `binary_sensor.master_bedroom_occupancy`
 - Sleep mode boolean: `input_boolean.<your_sleep_mode>`
 - Sleep / pre-cool cool setpoint: `input_number.master_sleep_cool_sp`
+- **Comfort boost toggle** *(optional)*: `input_boolean.master_boost` — flip it on
+  to temporarily cool the master to its **sleep setpoint (68°)** during the day
+  (e.g. someone's getting ready in there). While on, the room uses the colder
+  target **and** stays eligible even though it's occupancy-gated, so it cools
+  regardless of the clock or whether the occupancy sensor sees anyone. Turn it off
+  to return to the normal day target. Its status shows `(boost)`.
 - **Away Setpoint Override:** Home-occupied toggle → `input_boolean.<your_home_occupied>`
   · Away cool setpoint → `input_number.master_away_cool_sp` (**75**). While away
   (home toggle off) the master stays eligible **even though it's occupancy-gated**
@@ -435,6 +441,11 @@ satisfied. The target is clamped between the floor and ceiling.
    bedroom uses the 68 °F sleep cool setpoint. The same 68 °F target applies
    automatically inside the 20:00–07:00 window (house occupied) without touching
    the toggle — so an evening reading above 68 begins pre-cooling on its own.
+   - **Comfort boost.** In the middle of the day, turn on
+     `input_boolean.master_boost`: the master switches to the 68 °F target and
+     becomes eligible even if the occupancy sensor reads clear, so a 73° room
+     starts cooling; its status shows `Cooling … (boost)`. Turn it off → back to
+     the 75 °F day target.
 8. **Away.** Turn off `input_boolean.<your_home_occupied>` with nobody in
    `zone.home_wide` (or set the house-mode selector to Away). The eco preset is
    applied and each room switches to its **away** cool setpoint. With the master's

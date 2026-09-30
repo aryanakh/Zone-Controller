@@ -148,6 +148,13 @@ input_boolean:
     name: Theater guest room mode
     icon: mdi:bed-king
 
+  # Master comfort boost: while on, the master bedroom temporarily uses its sleep
+  # (night) cool setpoint and stays eligible during the day - e.g. someone is
+  # using the room. Point the master Room Zone's "Comfort boost toggle" at this.
+  master_boost:
+    name: Master bedroom comfort boost
+    icon: mdi:snowflake-thermometer
+
   # NOTE: sleep-mode and home-occupied booleans are intentionally NOT created
   # here - point the blueprints at your existing ones.
 

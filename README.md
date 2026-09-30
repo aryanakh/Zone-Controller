@@ -222,6 +222,10 @@ Full step-by-step field values and a verification checklist are in
   hands-on control, until you turn it back off.
 - **Sleep / pre-cool** — the master bedroom drops to a colder target at night,
   via a manual Sleep toggle or automatically during a scheduled evening window.
+- **Comfort boost** — a per-room toggle that temporarily applies the colder
+  sleep setpoint during the day and keeps the room eligible even if it's
+  occupancy-gated (e.g. cool the master down while someone's getting ready in it),
+  until you switch it back off.
 - **Scheduled activation** — a room can pre-cool on a daily window when the
   house is occupied; the window itself applies the colder night setpoint, so the
   master bedroom actively cools toward 68 °F from around 8pm for a cold bed.
