@@ -224,6 +224,21 @@ blueprint:
             entity:
               filter:
                 - domain: input_number
+        boost_boolean:
+          name: Comfort boost toggle (optional)
+          description: >
+            Optional input_boolean for a temporary "cool it down now" override -
+            e.g. flip it on while someone is using the master bedroom during the
+            day. While on, the room uses its sleep / pre-cool cool setpoint (the
+            colder target above) AND stays eligible even if it's occupancy-gated,
+            so it cools to that target regardless of the time of day. Turn it off
+            to return to the normal day behavior. Independent of the whole-house
+            night label - this only affects this room.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     away_section:
       name: Away Setpoint Override (optional)
@@ -467,6 +482,7 @@ variables:
   hysteresis: !input hysteresis
   sleep_boolean: !input sleep_boolean
   sleep_cool_setpoint: !input sleep_cool_setpoint
+  boost_boolean: !input boost_boolean
   home_occupied_ref: !input home_occupied_ref
   away_cool_setpoint: !input away_cool_setpoint
   cool_ride_along: !input cool_ride_along
@@ -511,14 +527,16 @@ variables:
        or is_state(schedule_requires_home, 'on') }}
   schedule_active: "{{ has_schedule and in_window and schedule_home_ok }}"
   # Effective cool setpoint. Use the sleep/pre-cool setpoint (when configured)
-  # whenever Sleep mode is on OR we are inside the scheduled window, so the
-  # evening window pre-cools toward the night target instead of the day target.
+  # whenever Sleep mode is on, we are inside the scheduled window, OR the comfort
+  # boost toggle is on - so the evening window pre-cools toward the night target,
+  # and a daytime boost drops the room to that same colder target on demand.
   # Optional entity inputs are a plain string when set and an empty dict when
   # unset, so `is string` reliably detects "configured".
+  boost_active: "{{ boost_boolean is string and is_state(boost_boolean, 'on') }}"
   use_night_sp: >
     {{ sleep_cool_setpoint is string and (
          (sleep_boolean is string and is_state(sleep_boolean, 'on'))
-         or schedule_active ) }}
+         or schedule_active or boost_active ) }}
   # Away: while the home toggle is OFF and an away setpoint is configured, use it
   # (takes precedence over day/sleep) and keep the room eligible even if
   # occupancy-gated, so it can't bake while nobody is home.
@@ -543,9 +561,10 @@ variables:
        else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
          if zone_mode == 'occupancy'
        else true }}
-  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window OR away -
-  # away keeps the room eligible so it can be capped at its away setpoint).
-  active: "{{ enabled_on and (mode_active or schedule_active or away_active) }}"
+  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window OR away OR
+  # comfort boost - away keeps the room eligible so it can be capped at its away
+  # setpoint; boost keeps it eligible so it cools to the sleep target on demand).
+  active: "{{ enabled_on and (mode_active or schedule_active or away_active or boost_active) }}"
   # Raw directional demand with a true two-sided deadband, independent of the
   # unit's mode. The room's own last-published demand (in demand_helper) is the
   # state memory: engage above cool_sp+hyst, then hold 'cool' until temp drops
@@ -623,7 +642,7 @@ variables:
          cool_riding
        )) }}
   # Which setpoint set is in effect (for the status line).
-  sp_tag: "{{ 'away' if away_active else 'sleep' if use_night_sp else 'day' }}"
+  sp_tag: "{{ 'away' if away_active else 'boost' if boost_active else 'sleep' if use_night_sp else 'day' }}"
   # Plain-English explanation of what this room is doing and why (for status_helper).
   room_status: >-
     {%- if bypassed -%}Manual override ON - not controlling this damper
