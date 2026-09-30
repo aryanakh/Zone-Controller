@@ -91,6 +91,15 @@ input_number:
     icon: mdi:bed-clock
     initial: 68
 
+  master_away_cool_sp:
+    name: Master bedroom cool setpoint (away)
+    min: 68
+    max: 82
+    step: 0.5
+    unit_of_measurement: "°F"
+    icon: mdi:bed-outline
+    initial: 75
+
   # Theater / bonus room setpoints, used only when guest-room mode is on.
   theater_cool_sp:
     name: Theater cool setpoint (day)
@@ -152,6 +161,14 @@ input_boolean:
   zc_bypass:
     name: HVAC full manual override (bypass)
     icon: mdi:hand-back-right-off
+
+  # Cooling-relief-needed flag: the coordinator turns this ON while cooling with
+  # fewer than the minimum rooms calling, so a relief room (e.g. the server) rides
+  # along ONLY when it's actually needed. Point the coordinator's "Cooling-relief-
+  # needed output" and the server's "Ride along only while this is on" at this.
+  zc_cool_relief:
+    name: HVAC cooling relief needed
+    icon: mdi:air-filter
 
 # Per-room raw demand (heat / cool / none), written by the Room Zone blueprint
 # and read by the Coordinator in priority order.
@@ -219,6 +236,15 @@ input_datetime:
     has_date: true
     has_time: true
     icon: mdi:timer-sand
+
+  # Away circulation purge: stores when the current fan-only purge window ends.
+  # Point the Coordinator's "Purge-window helper" AND every Room Zone's
+  # "Circulation purge window" at this same helper.
+  zc_purge_until:
+    name: HVAC circulation purge until
+    has_date: true
+    has_time: true
+    icon: mdi:fan-clock
 
 # A wide (~5 mi) zone. Anyone inside it counts as home/approaching.
 # 5 miles ~= 8047 meters.  # TODO: set latitude/longitude to your home.

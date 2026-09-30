@@ -107,13 +107,19 @@ Runs once for the whole house. It:
   theater like a bedroom (own sensor + setpoints + sleep target) and opens its
   damper to serve it, still falling back to relief when the guest isn't calling;
 - handles **home/away** (a toggle, or anyone inside a wide ~5 mi zone); when away
-  it applies the eco preset and holds the wide `heat_cool` band (default 64–76)
-  instead of cooling to setpoint, so it doesn't waste power while nobody's home;
+  it applies the eco preset and each room switches to its own **away cool
+  setpoint** (warmer than its day target to save power, but low enough that an
+  unoccupied room can't bake) — capped per-room, not just a hallway band;
 - honours an optional **house-mode selector** — `Away` forces the eco preset,
   `Vacation` turns the unit off;
 - applies a configurable **idle backstop** when no room is calling — off, a
   cooling-only high cap, or a `heat_cool` safety band (default 64–76 °F) that
-  keeps the whole house between a low and high limit.
+  keeps the whole house between a low and high limit;
+- optionally runs an **away circulation purge** — periodically (default every 8 h)
+  runs the blower in fan-only for a few minutes with every damper open while the
+  house is away, so air moves through all the ducts to discourage stagnant-air
+  mold / condensation; it yields the unit instantly when a room calls or you
+  return.
 
 ### 3. Helper package — `packages/zone_controller.yaml`
 Creates the supporting entities: per-room setpoints plus theater guest-room
@@ -226,6 +232,11 @@ Full step-by-step field values and a verification checklist are in
 - **Idle backstop** — when no room is calling, choose what the unit does: turn
   off, hold a cooling-only high cap, or hold a `heat_cool` safety band (default
   64–76 °F) so the whole house never drifts too hot *or* too cold.
+- **Away circulation purge** — while the house is away (or on vacation),
+  periodically run the blower in fan-only with every damper open to move air
+  through all the ducts and discourage stagnant-air mold / condensation. It never
+  heats or cools, and it yields the unit instantly the moment a room calls or you
+  come home. Off by default; interval and duration are configurable.
 - **Theater guest-room mode** — a toggle turns the theater/bonus room from a
   passive relief valve into a conditioned bedroom (its own sensor + setpoints,
   with a sleep target), while it still falls back to relief when not in use.
@@ -234,12 +245,23 @@ Full step-by-step field values and a verification checklist are in
   room, then reopen. It can be scoped to *urgent* cases only (via that room's
   urgent-demand output) so a room yields just when, say, the nursery is far past
   its target, and both share again once it recovers.
-- **Status output** — the coordinator writes a one-line summary of every decision
-  to an optional `input_text` (e.g. `Starting cooling - set thermostat to 72° -
-  Home`), updated only when the decision changes, so you can see at a glance what
-  it did and why.
-- **Pressure relief** — the theater damper opens automatically so the duct is
-  never over-pressurized.
+- **Status output** — the coordinator writes a compact one-line summary of every
+  decision to an optional `input_text` (e.g. `Cooling: Master bedroom · set 68°
+  (hall 70°) · Home Night`), updated only when the decision changes, so you can
+  see at a glance what it did and why.
+- **Pressure relief** — the duct is never over-pressurized: while cooling the
+  system keeps a minimum number of zones open (default 2) so the unit never runs
+  through a single small zone. A designated room (e.g. the server) rides along as
+  the useful second zone, but **only when it's actually needed** — while enough
+  higher-priority rooms are already calling, it stays closed so the full airflow
+  goes to them until one reaches temperature; the theater damper is the automatic
+  last-resort backstop.
+- **Day-only yield** *(optional)* — a room can be told to yield to a
+  higher-priority room only during the day. At night it keeps its damper open and
+  serves as the cooling-relief zone instead — e.g. the master focuses air on the
+  nursery by day, but at night stays open (cooling toward its own sleep target)
+  until satisfied, at which point the server becomes the relief. The theater is
+  never used for cooling relief unless the server truly can't help.
 - **Fail-open** — normally-open dampers spring open on power loss.
 - **100% local** — no cloud dependency.
 

@@ -225,6 +225,101 @@ blueprint:
               filter:
                 - domain: input_number
 
+    away_section:
+      name: Away Setpoint Override (optional)
+      icon: mdi:home-export-outline
+      collapsed: true
+      input:
+        home_occupied_ref:
+          name: Home-occupied toggle (for away setpoint)
+          description: >
+            Optional input_boolean - point it at your home-occupied toggle. While
+            it is OFF (nobody home) this room uses the away cool setpoint below and
+            stays eligible even if it's an occupancy-gated room, so it can't bake
+            while you're out. Needs the away setpoint below to take effect.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+        away_cool_setpoint:
+          name: Away cool setpoint
+          description: >
+            Optional input_number - the cool setpoint used while away (home toggle
+            off). Set it warmer than the day setpoint to save power, but low enough
+            that the room never bakes (e.g. 75). Takes precedence over day/sleep.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_number
+
+    relief_section:
+      name: Cooling Ride-Along (optional)
+      icon: mdi:air-filter
+      collapsed: true
+      input:
+        cool_ride_along:
+          name: Ride along while cooling (pressure relief)
+          description: >
+            While the unit is COOLING, keep this room's damper open even when it
+            isn't calling, so it provides a second airflow path and the system
+            never runs through a single small zone. Best on a room that always
+            benefits from cooling (e.g. a server room), so relief isn't wasted on
+            the theater. It never turns the unit on by itself and never heats;
+            it only rides along on cooling the unit is already doing, down to the
+            floor below.
+          default: false
+          selector:
+            boolean:
+        cool_ride_along_margin:
+          name: Ride-along floor below cool setpoint (deg)
+          description: >
+            How far below its cool setpoint this room may be cooled while riding
+            along. It stops taking ride-along air once it drops this far below its
+            setpoint, so it can't be frozen. Default 4.
+          default: 4.0
+          selector:
+            number:
+              min: 0.0
+              max: 20.0
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
+        ride_along_gate:
+          name: Ride along only while this is on (optional)
+          description: >
+            Optional input_boolean - point it at the Coordinator's "Cooling-relief-
+            needed output" helper. When set, this room rides along ONLY while that
+            helper is on (i.e. the coordinator says an extra open zone is actually
+            needed) - so it stays closed while enough higher-priority rooms are
+            already calling, keeping the full airflow on them until one reaches
+            temperature. Leave unset to ride along on every cooling cycle.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
+
+    purge_section:
+      name: Away Circulation Purge (optional)
+      icon: mdi:fan-alert
+      collapsed: true
+      input:
+        purge_until:
+          name: Circulation purge window (input_datetime)
+          description: >
+            Point this at the SAME "Purge-window helper" input_datetime the
+            Coordinator uses. While the coordinator is running an away circulation
+            purge, this room opens its damper (regardless of demand or enable) so
+            air moves through its duct too - discouraging stagnant-air mold /
+            condensation. Leave unset to opt this room out of purges.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+
     schedule_section:
       name: Scheduled Activation (optional)
       icon: mdi:clock-outline
@@ -310,6 +405,19 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        yield_day_only:
+          name: Only yield during the day (not at night)
+          description: >
+            When on, this room SUSPENDS its priority yield while it is on its
+            night / sleep setpoint (sleep toggle on, or inside its pre-cool window)
+            - so at night it keeps its damper open and serves itself (and provides
+            the relief zone) instead of yielding. Use this on the master bedroom so
+            it focuses air on the nursery during the day, but at night stays open
+            as the relief path until it reaches its own sleep target. No effect if
+            no yield is configured above.
+          default: false
+          selector:
+            boolean:
         urgent_helper:
           name: Urgent-demand output for THIS room (input_text, optional)
           description: >
@@ -359,12 +467,19 @@ variables:
   hysteresis: !input hysteresis
   sleep_boolean: !input sleep_boolean
   sleep_cool_setpoint: !input sleep_cool_setpoint
+  home_occupied_ref: !input home_occupied_ref
+  away_cool_setpoint: !input away_cool_setpoint
+  cool_ride_along: !input cool_ride_along
+  cool_ride_along_margin: !input cool_ride_along_margin
+  ride_along_gate: !input ride_along_gate
+  purge_until: !input purge_until
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
   early_start_boolean: !input early_start_boolean
   early_start_minutes: !input early_start_minutes
   priority_demand: !input priority_demand
+  yield_day_only: !input yield_day_only
   urgent_helper: !input urgent_helper
   urgent_margin: !input urgent_margin
   # --- derived state ---
@@ -404,8 +519,17 @@ variables:
     {{ sleep_cool_setpoint is string and (
          (sleep_boolean is string and is_state(sleep_boolean, 'on'))
          or schedule_active ) }}
-  # The active cool-setpoint entity (sleep/pre-cool target when applicable).
-  cool_sp_src: "{{ sleep_cool_setpoint if use_night_sp else cool_setpoint }}"
+  # Away: while the home toggle is OFF and an away setpoint is configured, use it
+  # (takes precedence over day/sleep) and keep the room eligible even if
+  # occupancy-gated, so it can't bake while nobody is home.
+  away_active: >
+    {{ home_occupied_ref is string and is_state(home_occupied_ref, 'off')
+       and away_cool_setpoint is string }}
+  # The active cool-setpoint entity: away > sleep/pre-cool > day.
+  cool_sp_src: >
+    {{ away_cool_setpoint if away_active
+       else sleep_cool_setpoint if use_night_sp
+       else cool_setpoint }}
   # WATCHDOG: only trust the cool setpoint when it is a real number. If the helper
   # is unavailable/unknown, do NOT fall back to 0 (that would make every reading
   # look "too hot" and demand cooling forever, even far below the real setpoint).
@@ -419,8 +543,9 @@ variables:
        else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
          if zone_mode == 'occupancy'
        else true }}
-  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window).
-  active: "{{ enabled_on and (mode_active or schedule_active) }}"
+  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window OR away -
+  # away keeps the room eligible so it can be capped at its away setpoint).
+  active: "{{ enabled_on and (mode_active or schedule_active or away_active) }}"
   # Raw directional demand with a true two-sided deadband, independent of the
   # unit's mode. The room's own last-published demand (in demand_helper) is the
   # state memory: engage above cool_sp+hyst, then hold 'cool' until temp drops
@@ -463,25 +588,53 @@ variables:
   # fires while the priority room is actually getting air, so we never yield
   # during a compressor cooldown while the unit is still serving THIS room.
   priority_dir: "{{ states(priority_demand) if priority_demand is string else 'none' }}"
+  # Day-only yield: suspend the yield while this room is on its night/sleep
+  # setpoint, so at night it keeps its damper open (serving itself + relief)
+  # instead of yielding to the priority room.
+  yield_suspended: "{{ yield_day_only and use_night_sp }}"
   priority_served: >
-    {{ (priority_dir == 'cool' and main_mode in ['cool', 'heat_cool'])
-       or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool']) }}
+    {{ not yield_suspended and (
+         (priority_dir == 'cool' and main_mode in ['cool', 'heat_cool'])
+         or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool'])) }}
   # Open only when the room's demand matches the direction the unit delivers AND
   # no higher-priority room is currently being served (see priority yield above).
+  # Cooling ride-along: while the unit is already cooling, keep this room open for
+  # pressure relief even when it isn't calling - down to a floor so it can't be
+  # frozen. It never turns the unit on (raw_demand is still published normally).
+  # If a ride-along gate is configured, only ride along while it is on (i.e. the
+  # coordinator says an extra open zone is actually needed) - so the room stays
+  # closed while enough higher-priority rooms already provide the open zones.
+  ride_along_allowed: >
+    {{ ride_along_gate is not string or is_state(ride_along_gate, 'on') }}
+  cool_riding: >
+    {{ cool_ride_along and ride_along_allowed and enable_cool and cool_sp_valid
+       and main_mode in ['cool', 'heat_cool']
+       and temp_valid and temp > (cool_sp - cool_ride_along_margin) }}
+  # Away circulation purge: while the coordinator's purge window is open, force
+  # this room's damper OPEN so the fan can move air through its duct (mold /
+  # condensation prevention), regardless of demand or enable state.
+  purging: >
+    {{ purge_until is string
+       and as_timestamp(now()) < as_timestamp(states(purge_until), 0) }}
   should_open: >
-    {{ active and not priority_served and (
+    {{ purging or (active and not priority_served and (
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
-         (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool'])
-       ) }}
+         (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool']) or
+         cool_riding
+       )) }}
+  # Which setpoint set is in effect (for the status line).
+  sp_tag: "{{ 'away' if away_active else 'sleep' if use_night_sp else 'day' }}"
   # Plain-English explanation of what this room is doing and why (for status_helper).
   room_status: >-
     {%- if bypassed -%}Manual override ON - not controlling this damper
+    {%- elif purging -%}Circulation purge - damper open, fan circulating (mold prevention){% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
     {%- elif not enabled_on -%}Off (disabled)
     {%- elif not temp_valid -%}No temperature reading
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
-    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ 'sleep' if use_night_sp else 'day' }})
+    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ sp_tag }})
     {%- elif raw_demand == 'heat' -%}Heating{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
-    {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}){{ ' - sleep setpoints' if use_night_sp else '' }}
+    {%- elif cool_riding and not priority_served -%}Riding along (pressure relief) - {{ temp | round(1) }}°, taking cool air down to {{ (cool_sp - cool_ride_along_margin) | round(1) }}°
+    {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}) ({{ sp_tag }})
     {%- endif -%}
 
 trigger:
