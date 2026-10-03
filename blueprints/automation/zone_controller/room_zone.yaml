@@ -3,9 +3,10 @@ blueprint:
   author: AryaNakh
   description: >
     Per-room damper control for a ducted HVAC zoning system. Instantiate once per
-    conditioned room (nursery, master bedroom, server room). The theater / bonus
-    (relief valve) room does NOT use this blueprint - its damper is owned by the
-    Coordinator.
+    room (nursery, master bedroom, server room, theater / guest room). The theater
+    uses its guest-mode toggle as its Enable toggle, and opens as the pressure-
+    relief valve whenever the Coordinator's relief flag (see "Force open while
+    this is on") is on - even while guest mode is off.
 
     What it does:
       1. Reads the room's temperature sensor and compares it to low/high
@@ -27,7 +28,8 @@ blueprint:
       - occupancy   : eligible only while the occupancy sensor is 'on'
 
     The Enable toggle is a hard master switch: while off, the room publishes no
-    demand and its damper is closed.
+    demand and its damper is closed (unless a purge or the force-open flag opens
+    it).
   domain: automation
   source_url: https://github.com/aryanakh/zone-controller/blob/main/blueprints/automation/zone_controller/room_zone.yaml
   input:
@@ -334,6 +336,19 @@ blueprint:
             entity:
               filter:
                 - domain: input_datetime
+        force_open_boolean:
+          name: Force open while this is on (optional)
+          description: >
+            Optional input_boolean. While it is on, this room's damper is held
+            OPEN regardless of demand or the Enable toggle. Use it on the theater,
+            pointed at the Coordinator's "Theater relief output" helper, so the
+            theater still acts as the last-resort pressure-relief valve even when
+            guest mode (its Enable toggle) is off. Leave unset on other rooms.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
 
     schedule_section:
       name: Scheduled Activation (optional)
@@ -420,6 +435,19 @@ blueprint:
             entity:
               filter:
                 - domain: input_text
+        priority_demand_extra:
+          name: Also yield to these demand helpers (optional)
+          description: >
+            Optional. More higher-priority demand helpers to yield to, on top of
+            the one above. This room closes its damper while ANY of them is being
+            served. Use it on the theater (lowest priority) with the nursery and
+            master demand helpers, so the guest room is honored last.
+          default: {}
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: input_text
         yield_day_only:
           name: Only yield during the day (not at night)
           description: >
@@ -489,12 +517,14 @@ variables:
   cool_ride_along_margin: !input cool_ride_along_margin
   ride_along_gate: !input ride_along_gate
   purge_until: !input purge_until
+  force_open_boolean: !input force_open_boolean
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
   early_start_boolean: !input early_start_boolean
   early_start_minutes: !input early_start_minutes
   priority_demand: !input priority_demand
+  priority_demand_extra: !input priority_demand_extra
   yield_day_only: !input yield_day_only
   urgent_helper: !input urgent_helper
   urgent_margin: !input urgent_margin
@@ -606,15 +636,25 @@ variables:
   # closes its damper to concentrate airflow on the priority room. This only ever
   # fires while the priority room is actually getting air, so we never yield
   # during a compressor cooldown while the unit is still serving THIS room.
-  priority_dir: "{{ states(priority_demand) if priority_demand is string else 'none' }}"
+  # All helpers this room yields to: the main one plus any extras (unset optional
+  # inputs are an empty dict, so they contribute nothing).
+  priority_list: >
+    {{ ([priority_demand] if priority_demand is string else [])
+       + (priority_demand_extra if (priority_demand_extra is not mapping
+                                    and priority_demand_extra is not string)
+          else ([priority_demand_extra] if priority_demand_extra is string else [])) }}
   # Day-only yield: suspend the yield while this room is on its night/sleep
   # setpoint, so at night it keeps its damper open (serving itself + relief)
   # instead of yielding to the priority room.
   yield_suspended: "{{ yield_day_only and use_night_sp }}"
+  # Yield while ANY listed higher-priority room is calling in the direction the
+  # unit is delivering.
   priority_served: >
     {{ not yield_suspended and (
-         (priority_dir == 'cool' and main_mode in ['cool', 'heat_cool'])
-         or (priority_dir == 'heat' and main_mode in ['heat', 'heat_cool'])) }}
+         (main_mode in ['cool', 'heat_cool']
+          and priority_list | select('is_state', 'cool') | list | count > 0)
+         or (main_mode in ['heat', 'heat_cool']
+          and priority_list | select('is_state', 'heat') | list | count > 0)) }}
   # Open only when the room's demand matches the direction the unit delivers AND
   # no higher-priority room is currently being served (see priority yield above).
   # Cooling ride-along: while the unit is already cooling, keep this room open for
@@ -635,8 +675,11 @@ variables:
   purging: >
     {{ purge_until is string
        and as_timestamp(now()) < as_timestamp(states(purge_until), 0) }}
+  # Force-open flag (e.g. the coordinator's theater relief output): hold the
+  # damper open regardless of demand or enable, as the pressure-relief valve.
+  forced_open: "{{ force_open_boolean is string and is_state(force_open_boolean, 'on') }}"
   should_open: >
-    {{ purging or (active and not priority_served and (
+    {{ purging or forced_open or (active and not priority_served and (
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
          (raw_demand == 'heat' and main_mode in ['heat', 'heat_cool']) or
          cool_riding
@@ -647,16 +690,45 @@ variables:
   room_status: >-
     {%- if bypassed -%}Manual override ON - not controlling this damper
     {%- elif purging -%}Circulation purge - damper open, fan circulating (mold prevention){% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
+    {%- elif forced_open and not (enabled_on and active and raw_demand in ['cool', 'heat']) -%}Relief valve open (pressure relief){% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
     {%- elif not enabled_on -%}Off (disabled)
     {%- elif not temp_valid -%}No temperature reading
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
-    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ sp_tag }})
-    {%- elif raw_demand == 'heat' -%}Heating{{ ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
+    {%- elif raw_demand == 'cool' -%}Cooling{{ ' (relief valve open)' if forced_open else ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ sp_tag }})
+    {%- elif raw_demand == 'heat' -%}Heating{{ ' (relief valve open)' if forced_open else ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ heat_sp | round(1) }}° target
     {%- elif cool_riding and not priority_served -%}Riding along (pressure relief) - {{ temp | round(1) }}°, taking cool air down to {{ (cool_sp - cool_ride_along_margin) | round(1) }}°
     {%- else -%}Idle - {{ temp | round(1) }}° (cool above {{ cool_sp | round(1) }}°{% if has_heat_sp %}, heat below {{ heat_sp | round(1) }}°{% endif %}) ({{ sp_tag }})
     {%- endif -%}
 
+# Optional toggles can't be plain state triggers (an unset input is an empty dict),
+# so expose them as trigger variables and watch them with guarded template
+# triggers - an unset input renders false and never fires. This makes the room
+# react immediately to boost, the relief flag and the ride-along gate instead of
+# waiting for the 5-min resync.
+trigger_variables:
+  t_boost: !input boost_boolean
+  t_force_open: !input force_open_boolean
+  t_ride_gate: !input ride_along_gate
+
 trigger:
+  - platform: template
+    value_template: "{{ t_boost is string and is_state(t_boost, 'on') }}"
+    id: boost_on
+  - platform: template
+    value_template: "{{ t_boost is string and is_state(t_boost, 'off') }}"
+    id: boost_off
+  - platform: template
+    value_template: "{{ t_force_open is string and is_state(t_force_open, 'on') }}"
+    id: force_open_on
+  - platform: template
+    value_template: "{{ t_force_open is string and is_state(t_force_open, 'off') }}"
+    id: force_open_off
+  - platform: template
+    value_template: "{{ t_ride_gate is string and is_state(t_ride_gate, 'on') }}"
+    id: ride_gate_on
+  - platform: template
+    value_template: "{{ t_ride_gate is string and is_state(t_ride_gate, 'off') }}"
+    id: ride_gate_off
   - platform: state
     entity_id: !input room_temp_sensor
     id: temp

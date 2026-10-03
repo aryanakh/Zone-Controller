@@ -28,6 +28,7 @@
 #       sensor.nursery_temperature
 #       sensor.server_room_temperature
 #       sensor.master_bedroom_temperature
+#       sensor.theater_temperature
 #   - Master bedroom occupancy:
 #       binary_sensor.master_bedroom_occupancy
 #   - Damper switches (off = open, on = closed):
@@ -35,7 +36,7 @@
 #       switch.damper_server_room
 #       switch.damper_master_bedroom_1
 #       switch.damper_master_bedroom_2
-#       switch.damper_theater          (relief valve)
+#       switch.damper_theater          (guest room + relief valve)
 #   - Main upstairs unit:
 #       climate.upstairs_hvac
 #   - Your existing toggles (this package does NOT create these):
@@ -100,7 +101,8 @@ input_number:
     icon: mdi:bed-outline
     initial: 75
 
-  # Theater / bonus room setpoints, used only when guest-room mode is on.
+  # Theater / bonus room setpoints, used by the theater Room Zone while guest-room
+  # mode is on (the sleep one also drives its 20:00 pre-cool and its boost).
   theater_cool_sp:
     name: Theater cool setpoint (day)
     min: 65
@@ -142,11 +144,19 @@ input_boolean:
     name: Master bedroom enabled
     icon: mdi:bed
 
-  # Theater guest-room mode: while on, the coordinator conditions the theater
-  # like a bedroom instead of using it only as the pressure-relief valve.
+  # Theater guest-room mode: the theater Room Zone's Enable toggle. While on, the
+  # theater is conditioned like a bedroom (setpoints, 20:00 pre-cool, boost);
+  # while off it only opens as the pressure-relief valve.
   theater_guest_mode:
     name: Theater guest room mode
     icon: mdi:bed
+
+  # Theater comfort boost: while on, the theater temporarily uses its sleep cool
+  # setpoint. Point the theater Room Zone's "Comfort boost toggle" at this.
+  # (Like every theater setpoint, it only takes effect while guest mode is on.)
+  theater_boost:
+    name: Theater comfort boost
+    icon: mdi:snowflake-thermometer
 
   # Master comfort boost: while on, the master bedroom temporarily uses its sleep
   # (night) cool setpoint and stays eligible during the day - e.g. someone is
@@ -177,6 +187,14 @@ input_boolean:
     name: HVAC cooling relief needed
     icon: mdi:air-filter
 
+  # Theater relief flag: the coordinator turns this ON whenever the theater must
+  # open as the last-resort pressure-relief valve. Point the coordinator's
+  # "Theater relief output" and the theater Room Zone's "Force open while this
+  # is on" at this.
+  zc_theater_relief:
+    name: HVAC theater relief valve open
+    icon: mdi:valve-open
+
 # Per-room raw demand (heat / cool / none), written by the Room Zone blueprint
 # and read by the Coordinator in priority order.
 input_text:
@@ -202,8 +220,8 @@ input_text:
     initial: none
     icon: mdi:baby-carriage-off
 
-  # Theater demand (guest-room mode). Written by the Coordinator itself; add it to
-  # the coordinator's demand list at the priority you want the guest room to have.
+  # Theater demand (guest-room mode). Written by the theater Room Zone; add it LAST
+  # in the coordinator's demand list so the guest room is the lowest priority.
   theater_demand:
     name: Theater demand
     initial: none
@@ -222,6 +240,10 @@ input_text:
     name: Server room status
     max: 255
     icon: mdi:server
+  theater_status:
+    name: Theater status
+    max: 255
+    icon: mdi:bed
 
   # Coordinator writes a one-line summary of each decision here (diagnostic).
   zc_status:

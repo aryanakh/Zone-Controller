@@ -21,16 +21,17 @@ blueprint:
          lower-priority room. It stamps the last changeover into an
          input_datetime helper.
 
-      3. Pressure relief - the theater / bonus damper is a relief valve. It opens
-         when every other damper is closed, AND (while cooling) whenever fewer
-         than "Minimum open zones while cooling" room dampers are open - so the
-         unit never runs through a single small zone (high static pressure); there
-         are always at least that many open paths (a bedroom plus the theater).
-         Heating is unaffected, and it never heats or over-cools a bedroom.
-         Optionally, a guest-room mode conditions the theater like a bedroom
-         (its own temp sensor + setpoints, with sleep support) and opens its
-         damper to serve it, while still falling back to the relief role when the
-         guest isn't calling.
+      3. Pressure relief - it decides when the theater / bonus damper must open
+         as the last-resort relief valve: when every other damper is closed, AND
+         (while cooling) whenever fewer than "Minimum open zones while cooling"
+         room dampers are open - so the unit never runs through a single small
+         zone (high static pressure). It publishes that decision to the "Theater
+         relief output" flag, which the theater's own Room Zone uses to open its
+         damper. (It can still drive a relief damper directly if you set one -
+         the older setup.) It also publishes a cooling-relief flag so a ride-along
+         room (the server) is the preferred relief path. Heating is unaffected.
+         The theater as a guest bedroom (guest mode, setpoints, pre-cool, boost)
+         is handled by its own Room Zone automation, not here.
 
       4. Home / away - when nobody is home (a toggle is off AND nobody is inside a
          wide ~5 mi presence zone) it reduces conditioning. An optional house-mode
@@ -78,10 +79,10 @@ blueprint:
           description: >
             The per-room demand input_text helpers, ordered by priority (add the
             highest-priority room first). Order IS the priority. For this house:
-            nursery, then master bedroom, then server room. If you use theater
-            guest mode, add its theater_demand helper LAST (lowest priority) so it
-            yields to every room above it; if you do NOT use guest mode, leave the
-            theater out - it's only the relief valve then.
+            nursery, then master bedroom, then server room, then the theater's
+            theater_demand helper LAST (lowest priority). The theater's Room Zone
+            only publishes demand while guest mode is on, so it's harmless to
+            leave it listed when guest mode is off.
           selector:
             entity:
               multiple: true
@@ -90,16 +91,37 @@ blueprint:
         zone_dampers:
           name: Room damper switches (all non-relief dampers)
           description: >
-            Every room damper switch EXCEPT the relief valve - i.e. nursery,
-            server room and both master bedroom dampers. off = open, on = closed.
+            Every room damper switch EXCEPT the theater (relief valve) - i.e.
+            nursery, server room and both master bedroom dampers. off = open,
+            on = closed. Do NOT add the theater damper here, or its relief opening
+            would count toward the minimum and make it flip open/closed.
           selector:
             entity:
               multiple: true
               filter:
                 - domain: switch
+        theater_relief_helper:
+          name: Theater relief output (input_boolean, recommended)
+          description: >
+            An input_boolean the coordinator turns ON whenever the theater must
+            open as the pressure-relief valve (every room damper closed, or too
+            few open while cooling) and OFF otherwise. Point the theater Room
+            Zone's "Force open while this is on" at this helper - that's how the
+            theater stays the last-resort relief valve now that it has its own
+            controller.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: input_boolean
         relief_damper:
-          name: Relief valve damper switch
-          description: The theater / bonus room damper, used as the pressure relief valve.
+          name: Relief valve damper switch (legacy, optional)
+          description: >
+            LEGACY - leave this EMPTY once the theater has its own Room Zone (use
+            the "Theater relief output" above instead). If set, the coordinator
+            drives this damper directly as the relief valve, which would fight the
+            theater's Room Zone.
+          default: {}
           selector:
             entity:
               multiple: true
@@ -549,102 +571,6 @@ blueprint:
               filter:
                 - domain: input_datetime
 
-    theater_section:
-      name: Theater Guest Room (optional)
-      icon: mdi:bed-king
-      collapsed: true
-      input:
-        guest_mode:
-          name: Guest room mode toggle
-          description: >
-            An input_boolean. While ON, the theater / bonus room is conditioned
-            like a real bedroom (monitored against the setpoints below and given
-            airflow when it calls) instead of acting only as the pressure-relief
-            valve. While OFF, it behaves exactly as before (relief valve only).
-            The theater still opens for relief whenever every other damper is
-            closed, even in guest mode.
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: input_boolean
-        guest_temp_sensor:
-          name: Theater temperature sensor
-          description: The theater room's temperature sensor. Required for guest mode.
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: sensor
-                  device_class: temperature
-        guest_cool_setpoint:
-          name: Theater cool setpoint (input_number)
-          description: Cool the theater when it rises above this (guest mode).
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: input_number
-        guest_heat_setpoint:
-          name: Theater heat setpoint (input_number, optional)
-          description: >
-            Heat the theater when it drops below this. Leave unset for a cool-only
-            guest room (like the master bedroom). Keep it well below the cool
-            setpoint so it can't be cooled into needing heat.
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: input_number
-        guest_sleep_boolean:
-          name: Theater sleep toggle (optional)
-          description: >
-            Optional input_boolean - point it at the same sleep toggle the master
-            uses if you like. While on, the theater uses the sleep cool setpoint
-            below instead of its normal cool setpoint.
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: input_boolean
-        guest_sleep_setpoint:
-          name: Theater sleep cool setpoint (input_number, optional)
-          description: Cool setpoint used while the theater sleep toggle is on.
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: input_number
-        guest_hysteresis:
-          name: Theater hysteresis (deg)
-          description: >
-            Half the anti-chatter deadband applied on each side of the theater
-            setpoints (same idea as a Room Zone's hysteresis).
-          default: 0.5
-          selector:
-            number:
-              min: 0.0
-              max: 3.0
-              step: 0.1
-              unit_of_measurement: deg
-              mode: box
-        guest_demand_helper:
-          name: Theater demand helper (input_text)
-          description: >
-            An input_text the coordinator writes the theater's demand to
-            (heat / cool / none) and reads back as its deadband memory. Required
-            for guest mode. ALSO add this helper to the "Room demand helpers" list
-            above, as the LAST entry - that lets it turn the unit on and take part
-            in arbitration, and makes the theater the lowest-priority zone: it
-            yields its airflow (damper closes) to any room listed before it that is
-            currently being served, and only gets air when no higher room needs
-            that direction. (If added elsewhere, it yields to whatever is above it.)
-          default: {}
-          selector:
-            entity:
-              filter:
-                - domain: input_text
-
 mode: restart
 max_exceeded: silent
 
@@ -653,6 +579,12 @@ variables:
   zone_demands: !input zone_demands
   zone_dampers: !input zone_dampers
   relief_damper: !input relief_damper
+  theater_relief_helper: !input theater_relief_helper
+  # Legacy direct drive: only touch relief_damper when one is actually set (an
+  # unset optional input is an empty dict).
+  relief_damper_set: >
+    {{ relief_damper is string
+       or (relief_damper is not mapping and relief_damper | count > 0) }}
   min_open_zones_cool: !input min_open_zones_cool
   cool_relief_helper: !input cool_relief_helper
   relief_ride_dampers: !input relief_ride_dampers
@@ -690,43 +622,6 @@ variables:
   manual_grace: !input manual_grace
   last_cmd_setpoint: !input last_cmd_setpoint
   manual_until: !input manual_until
-  guest_mode: !input guest_mode
-  guest_temp_sensor: !input guest_temp_sensor
-  guest_cool_setpoint: !input guest_cool_setpoint
-  guest_heat_setpoint: !input guest_heat_setpoint
-  guest_sleep_boolean: !input guest_sleep_boolean
-  guest_sleep_setpoint: !input guest_sleep_setpoint
-  guest_hysteresis: !input guest_hysteresis
-  guest_demand_helper: !input guest_demand_helper
-  # --- theater guest room (optional) ---
-  # When guest mode is on, the coordinator conditions the theater like a bedroom:
-  # it computes a heat/cool/none demand (two-sided deadband, remembered via the
-  # demand helper) exactly like a Room Zone, publishes it, and opens the theater
-  # damper to serve it. The helper is added to the demand list for arbitration.
-  guest_enabled: "{{ guest_mode is string and is_state(guest_mode, 'on') }}"
-  guest_temp_raw: "{{ states(guest_temp_sensor) if guest_temp_sensor is string else 'x' }}"
-  guest_temp_valid: "{{ is_number(guest_temp_raw) }}"
-  guest_temp: "{{ guest_temp_raw | float(0) }}"
-  guest_active: "{{ guest_enabled and guest_temp_valid and guest_cool_setpoint is string }}"
-  guest_use_sleep: >
-    {{ guest_sleep_setpoint is string and guest_sleep_boolean is string
-       and is_state(guest_sleep_boolean, 'on') }}
-  guest_cool_sp: >
-    {{ (states(guest_sleep_setpoint) | float(999)) if guest_use_sleep
-       else (states(guest_cool_setpoint) | float(999)) if guest_cool_setpoint is string
-       else 999 }}
-  guest_has_heat: "{{ guest_heat_setpoint is string and is_number(states(guest_heat_setpoint)) }}"
-  guest_heat_sp: "{{ states(guest_heat_setpoint) | float(-999) if guest_has_heat else -999 }}"
-  guest_was_cool: "{{ guest_demand_helper is string and is_state(guest_demand_helper, 'cool') }}"
-  guest_was_heat: "{{ guest_demand_helper is string and is_state(guest_demand_helper, 'heat') }}"
-  guest_want_cool: >
-    {{ guest_active and (guest_temp > (guest_cool_sp + guest_hysteresis)
-        or (guest_was_cool and guest_temp > (guest_cool_sp - guest_hysteresis))) }}
-  guest_want_heat: >
-    {{ guest_active and guest_has_heat
-       and (guest_temp < (guest_heat_sp - guest_hysteresis)
-        or (guest_was_heat and guest_temp < (guest_heat_sp + guest_hysteresis))) }}
-  guest_demand: "{{ 'cool' if guest_want_cool else 'heat' if guest_want_heat else 'none' }}"
   # --- presence ---
   home_toggle: "{{ is_state(home_occupied, 'on') }}"
   anyone_near: >
@@ -864,33 +759,11 @@ variables:
   relief_needed: >
     {{ all_others_closed
        or (main_state in ['cool', 'heat_cool'] and open_room_count < min_open_zones_cool) }}
-  # The guest room (theater) is the LOWEST-priority zone: it yields whenever any
-  # higher-priority room (one listed BEFORE its demand helper in the demand list)
-  # is currently being served in the unit's direction - so the nursery/master get
-  # the air first. If the guest helper isn't in the list, treat every listed room
-  # as higher priority.
-  guest_yields: >
-    {% set ns = namespace(passed=false, yield=false) %}
-    {% for d in zone_demands %}
-      {% if d == guest_demand_helper %}{% set ns.passed = true %}
-      {% elif not ns.passed and (
-           (states(d) == 'cool' and main_state in ['cool', 'heat_cool']) or
-           (states(d) == 'heat' and main_state in ['heat', 'heat_cool'])) %}
-        {% set ns.yield = true %}
-      {% endif %}
-    {% endfor %}
-    {{ ns.yield }}
-  # In guest mode, the theater is served when it's calling in the direction the
-  # unit is currently delivering (same rule a Room Zone uses) AND no higher-
-  # priority room is being served.
-  guest_open: >
-    {{ guest_active and not guest_yields and (
-         (guest_demand == 'cool' and main_state in ['cool', 'heat_cool']) or
-         (guest_demand == 'heat' and main_state in ['heat', 'heat_cool'])) }}
-  # Open the theater damper (switch OFF) to serve the guest, OR as the relief
-  # valve when pressure relief is needed (all rooms closed, or too few open while
-  # cooling).
-  theater_open: "{{ guest_open or relief_needed }}"
+  # The theater opens as the relief valve exactly when relief is needed. This is
+  # published to theater_relief_helper (the theater's Room Zone opens on it) and,
+  # in the legacy setup only, drives relief_damper directly. Guest-room service is
+  # the theater Room Zone's own job now.
+  theater_open: "{{ relief_needed }}"
   current_preset: "{{ state_attr(main_climate, 'preset_mode') }}"
   # --- setpoint force-run ---
   # Force-run whenever a room (or the cap) is calling and we're not forced off.
@@ -1056,10 +929,16 @@ action:
                       entity_id: !input purge_until
                     data:
                       timestamp: "{{ purge_new_until_ts }}"
-          # Open the relief / theater damper (rooms open their own dampers).
-          - service: switch.turn_off
-            target:
-              entity_id: !input relief_damper
+          # Every Room Zone (theater included) opens its own damper via the purge
+          # window. Legacy setup only: open a directly-driven relief damper.
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ relief_damper_set }}"
+                sequence:
+                  - service: switch.turn_off
+                    target:
+                      entity_id: !input relief_damper
           # Run the blower in fan-only (no heating or cooling).
           - choose:
               - conditions:
@@ -1098,21 +977,41 @@ action:
   - condition: template
     value_template: "{{ not purge_now }}"
 
-  # --- 1. Theater damper: guest supply and/or pressure relief -----------------
-  # Open (switch OFF) to serve the guest room (guest mode) or as the relief valve
-  # when every other damper is closed; otherwise keep it closed (switch ON).
+  # --- 1. Theater relief valve -----------------------------------------------
+  # Publish whether the theater must open for pressure relief (every room closed,
+  # or too few open while cooling). The theater's Room Zone opens its damper on
+  # this flag. Written only on change.
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ theater_open }}"
+            value_template: "{{ theater_relief_helper is string and theater_open and not is_state(theater_relief_helper, 'on') }}"
+        sequence:
+          - service: input_boolean.turn_on
+            target:
+              entity_id: !input theater_relief_helper
+      - conditions:
+          - condition: template
+            value_template: "{{ theater_relief_helper is string and not theater_open and is_state(theater_relief_helper, 'on') }}"
+        sequence:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: !input theater_relief_helper
+  # Legacy setup only (no theater Room Zone): drive the relief damper directly.
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ relief_damper_set and theater_open }}"
         sequence:
           - service: switch.turn_off
             target:
               entity_id: !input relief_damper
-    default:
-      - service: switch.turn_on
-        target:
-          entity_id: !input relief_damper
+      - conditions:
+          - condition: template
+            value_template: "{{ relief_damper_set and not theater_open }}"
+        sequence:
+          - service: switch.turn_on
+            target:
+              entity_id: !input relief_damper
 
   # --- 2. Eco preset apply / restore -----------------------------------------
   # Applies while House mode = Away, or presence-away with the eco action.
@@ -1308,20 +1207,6 @@ action:
               entity_id: !input status_helper
             data:
               value: "{{ status_msg }}"
-
-  # --- 6. Theater guest demand publish (optional) ----------------------------
-  # Publish the theater's computed demand to its helper (its deadband memory and
-  # the value the demand list arbitrates on). Written only when it changes.
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ guest_demand_helper is string and states(guest_demand_helper) != guest_demand }}"
-        sequence:
-          - service: input_text.set_value
-            target:
-              entity_id: !input guest_demand_helper
-            data:
-              value: "{{ guest_demand }}"
 
   # --- 7. Cooling-relief flag (optional) -------------------------------------
   # Turn the relief flag ON while cooling with fewer than the minimum rooms
