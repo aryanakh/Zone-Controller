@@ -14,15 +14,16 @@ One upstairs unit serves four rooms through motorized dampers:
 | 1 | Nursery | 1 | standard, tight band | Heat < 68 °F, Cool > 71 °F |
 | 2 | Master bedroom | 2 | occupancy, cool-only | Cool > 75 °F day / > 68 °F Sleep |
 | 3 | Server room | 1 | always-on, cool-only | Cool > 80 °F |
-| 4 | Theater / bonus | 1 | relief valve | Coordinator-managed |
+| 4 | Theater / bonus | 1 | guest room (when guest mode on) + relief valve | Cool > 74 °F day / > 69 °F sleep · pre-cools from 20:00 |
 | — | Hallway | 0 | always open (structural relief) | — |
 
-Each conditioned room runs a **Room Zone** automation. It computes a raw demand
-(`heat` / `cool` / `none`), writes it to an `input_text` helper, and opens its
-damper only when its demand matches the direction the unit is delivering. The
-single **Coordinator** automation reads those demand helpers *in priority order*,
-sets the unit's direction to the highest-priority calling room, turns the unit
-on/off, drives the theater damper as a relief valve, and handles home/away.
+Each room — the theater included — runs a **Room Zone** automation. It computes a
+raw demand (`heat` / `cool` / `none`), writes it to an `input_text` helper, and
+opens its damper only when its demand matches the direction the unit is
+delivering. The single **Coordinator** automation reads those demand helpers *in
+priority order*, sets the unit's direction to the highest-priority calling room,
+turns the unit on/off, decides when the theater must open as the pressure-relief
+valve (publishing a flag the theater's Room Zone obeys), and handles home/away.
 
 Because a single air handler is hot **or** cold at any moment, priority decides
 which room "wins" the unit when demands conflict; lower-priority rooms wanting the
@@ -60,15 +61,17 @@ confirm the setpoint defaults). Then **restart Home Assistant**. This creates:
   `server_cool_sp`, `master_cool_sp` / `master_sleep_cool_sp` /
   `master_away_cool_sp`, `theater_cool_sp` / `theater_sleep_cool_sp`
 - Enable toggles: `input_boolean.nursery_enabled`, `server_enabled`,
-  `master_enabled`, `theater_guest_mode`, `master_boost`
+  `master_enabled`, `theater_guest_mode` (the theater's enable)
+- Comfort boosts: `input_boolean.master_boost`, `theater_boost`
 - Demand helpers: `input_text.nursery_demand`, `master_demand`, `server_demand`,
   `theater_demand`; urgent helper: `nursery_urgent`; per-room status:
-  `nursery_status`, `master_status`, `server_status`
+  `nursery_status`, `master_status`, `server_status`, `theater_status`
 - `input_datetime.zc_last_changeover`
 - Setpoint force-run: `input_boolean.zc_setpoint_manual`,
   `input_number.zc_last_cmd_setpoint`, `input_datetime.zc_manual_until`
 - Full manual override: `input_boolean.zc_bypass`
 - Cooling relief flag: `input_boolean.zc_cool_relief`
+- Theater relief-valve flag: `input_boolean.zc_theater_relief`
 - Away circulation purge: `input_datetime.zc_purge_until`
 - `zone.home_wide` (~5 mi)
 
@@ -87,13 +90,14 @@ both (or copy into `<config>/blueprints/automation/zone_controller/`):
 
 ## 3. Create the room automations
 
-Create **one automation per conditioned room** from the **Room Zone** blueprint.
+Create **one automation per room** from the **Room Zone** blueprint — four in
+total: nursery, master bedroom, server room, and the theater.
 
 Each room also has an optional **Room status output** (`input_text`) it writes a
 plain-English explanation to — its temperature vs its effective target, day/sleep,
 whether it's yielding or disabled — so you can see *why* each room is or isn't
 calling. Point each room at its own (`nursery_status`, `master_status`,
-`server_status`).
+`server_status`, `theater_status`).
 
 Also set every room's **Full manual override / bypass** input to the shared
 `input_boolean.zc_bypass` (the same one the Coordinator uses). While that toggle
@@ -200,8 +204,51 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
 - **Priority Yield:** *leave unset.* The server must never stop getting air, so it
   should not yield to the nursery (or any room).
 
-> The theater / bonus room does **not** get a Room Zone automation — its damper
-> is managed only by the coordinator.
+### Theater / bonus (priority 4 — guest room + relief valve)
+The theater has two jobs: a **guest bedroom** while guest mode is on, and the
+**last-resort pressure-relief valve** at all times. Its guest-mode toggle is its
+Enable toggle, so with guest mode off it publishes no demand and only opens when
+the coordinator says relief is needed.
+- Room enable toggle: `input_boolean.theater_guest_mode`
+- Demand helper: `input_text.theater_demand`
+- Room status output: `input_text.theater_status`
+- Room temperature sensor: `sensor.theater_temperature` *(your theater sensor)*
+- Damper switch(es): `switch.damper_theater`
+- Main HVAC climate entity: `climate.upstairs_hvac`
+- Cool setpoint: `input_number.theater_cool_sp` · Enable cooling: **on**
+- Heat setpoint: *(leave unset for cool-only, like the master)* · Enable heating: **off**
+- Zone mode: **Standard** — while guest mode is on, the room is always eligible.
+- Sleep mode boolean: `input_boolean.<your_sleep_mode>` *(optional — same toggle as the master)*
+- Sleep / pre-cool cool setpoint: `input_number.theater_sleep_cool_sp`
+- **Comfort boost toggle:** `input_boolean.theater_boost` — temporarily drops the
+  theater to its sleep setpoint, like the master's boost. Only works while guest
+  mode is on (with guest mode off the theater isn't a bedroom, so boost is ignored).
+- **Scheduled activation** (pre-cool, same as the master):
+  - Active after: **20:00:00** · Active until: **07:00:00**
+  - Schedule requires house occupied: `input_boolean.<your_home_occupied>`
+  - Leave *"Start the window earlier…"* unset (that's for the master).
+
+  With guest mode on, from 20:00 the theater switches to its sleep setpoint and
+  pre-cools for the guest, exactly like the master. With guest mode off, the
+  schedule does nothing (the room is disabled).
+- **Priority Yield** — keep the guest room **last**:
+  - *Yield to this higher-priority room's demand helper:* `input_text.nursery_demand`
+  - *Also yield to these demand helpers:* `input_text.master_demand`
+  - The theater closes its damper while the nursery **or** master is being served,
+    and only gets air once neither needs it. It still publishes its demand, so the
+    unit keeps running for it.
+- **Away Circulation Purge → Circulation purge window:** `input_datetime.zc_purge_until`
+- **Away Circulation Purge → Force open while this is on:**
+  `input_boolean.zc_theater_relief` — **required.** This is how the theater stays
+  the relief valve: the coordinator turns this flag on whenever the duct needs a
+  relief path, and the theater opens regardless of guest mode or yielding.
+
+> **Trade-off to know:** because the guest room yields to the master, on a night
+> when the master is pre-cooling to its sleep target for a long time the theater
+> waits its turn and may reach its own target later. The master's *early start*
+> (19:00 when guest mode is on) helps the master finish sooner. If the guest's
+> comfort matters more than strict ordering, drop `input_text.master_demand` from
+> the theater's yield list.
 
 > **If you use the Away Circulation Purge** (below), also set on **every** Room
 > Zone: *Away Circulation Purge → Circulation purge window* =
@@ -216,13 +263,19 @@ Create **one** automation from the **Coordinator** blueprint:
 - Main HVAC climate entity: `climate.upstairs_hvac`
 - **Room demand helpers, HIGHEST PRIORITY FIRST** — add in this order:
   `input_text.nursery_demand`, `input_text.master_demand`,
-  `input_text.server_demand`, and (if you use guest mode) `input_text.theater_demand`
-  **last**. **Order = priority** — the theater goes last so it's the
-  lowest-priority zone and yields its airflow to the rooms above it.
+  `input_text.server_demand`, `input_text.theater_demand` **last**. **Order =
+  priority** — the theater goes last so it's the lowest-priority zone. (It only
+  publishes demand while guest mode is on, so leave it listed permanently.)
 - Room damper switches (all non-relief): `switch.damper_nursery`,
   `switch.damper_master_bedroom_1`, `switch.damper_master_bedroom_2`,
-  `switch.damper_server_room`
-- Relief valve damper switch: `switch.damper_theater`
+  `switch.damper_server_room` — **not** the theater damper (its relief opening
+  would then count toward the minimum and make it flip open/closed).
+- **Theater relief output:** `input_boolean.zc_theater_relief` — the coordinator
+  turns this on whenever the theater must open as the relief valve. The theater's
+  Room Zone opens its damper on it (its *Force open while this is on*).
+- Relief valve damper switch *(legacy)*: **leave empty.** Only for the old setup
+  where the coordinator drove the theater damper itself — setting it now would
+  fight the theater's own Room Zone.
 - Minimum open zones while cooling: **2** — while cooling, keep at least 2 zones
   open so the unit never runs through a single small zone (high static pressure).
   The **server's Cooling Ride-Along** normally provides the second zone (useful
@@ -317,21 +370,11 @@ Create **one** automation from the **Coordinator** blueprint:
   - Manual-edit grace / last-commanded / grace-until helpers: only needed if you
     turn the grace on; leave them unset otherwise.
 
-- **Theater Guest Room** *(optional — only when a guest sleeps in the theater)*:
-  - Guest room mode toggle: `input_boolean.theater_guest_mode`
-  - Theater temperature sensor: `sensor.<your_theater_temp>`
-  - Theater cool setpoint: `input_number.theater_cool_sp`
-  - Theater heat setpoint: *(leave unset for cool-only, like the master)*
-  - Theater sleep toggle / sleep cool setpoint: your sleep boolean +
-    `input_number.theater_sleep_cool_sp` *(optional — for a colder night target)*
-  - Theater hysteresis: **0.5**
-  - Theater demand helper: `input_text.theater_demand` — **and also add this same
-    helper to the "Room demand helpers" list above as the LAST entry.** That lets
-    the guest room turn the unit on and take part in arbitration, and makes the
-    theater the **lowest-priority zone**: it closes its damper (yields its air) to
-    the nursery/master/server whenever they're being served, and only gets air
-    when no higher-priority room needs that direction. It still opens as the
-    relief valve when every other damper is closed.
+> **Theater guest room settings moved.** The coordinator no longer has a
+> *Theater Guest Room* section — guest mode, setpoints, sleep, pre-cool and boost
+> all live on the theater's own Room Zone (see **Theater / bonus** above). If your
+> existing coordinator automation still has the old guest inputs saved, they're
+> simply ignored; you can clear them when you next edit it.
 
 > **The auto manual-edit grace is OFF by default — keep it off.** It tried to
 > auto-detect a by-hand setpoint change and back off, but it proved too sensitive
@@ -345,11 +388,10 @@ Create **one** automation from the **Coordinator** blueprint:
 
 > **Guest room mode** turns the theater from a passive relief valve into a
 > conditioned bedroom. While the toggle is on and the theater is above its cool
-> setpoint it calls for cooling like any room and its damper opens to serve it;
-> while off (or not calling) the theater keeps working as the pressure-relief
-> valve. Because the theater is also the relief path, it needs Setpoint Force-Run
-> on for the unit to actually run for it. A new guest's temperature is picked up
-> on the next re-sync (within ~2 min).
+> setpoint it calls for cooling like any room and its damper opens to serve it
+> (after the nursery and master); while off (or not calling) the theater keeps
+> working as the pressure-relief valve. Like every room, it needs Setpoint
+> Force-Run on for the unit to actually run for it.
 
 > Choose **Turn the unit off** for the away action only if you have no room that
 > must be conditioned regardless of occupancy — it stops the server room too.
@@ -430,11 +472,19 @@ satisfied. The target is clamped between the floor and ceiling.
      turns **on** and the **server** takes over as the relief.
    - A genuinely hot server (over its setpoint) always opens on its own,
      regardless of any of the above.
+   - **Theater relief (guest mode off).** With guest mode off, close every room
+     damper (nothing calling): `input_boolean.zc_theater_relief` turns **on** and
+     the theater's status reads `Relief valve open (pressure relief)` with
+     `switch.damper_theater` **off** (open). Make a room call so 2 zones open → the
+     flag turns **off** and the theater closes (status `Off (disabled)`).
    - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
      theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
      unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.
-     Satisfy the theater (or turn guest mode off) and it reverts to relief-valve
-     behavior (open when too few zones are open, per the min-open rule above).
+     Now make the master call: the theater's status reads `Cooling (yielding to
+     priority) …` and its damper closes until the master is satisfied.
+   - **Guest pre-cool + boost.** With guest mode on, after 20:00 (house occupied)
+     the theater's target drops to its sleep setpoint (status `… (sleep)`). During
+     the day, `input_boolean.theater_boost` does the same on demand (`… (boost)`).
 6. **Main on/off.** With a room calling, the unit switches on in the winning
    direction. With every room satisfied/disabled, it switches off.
 7. **Sleep / pre-cool.** Turn on `input_boolean.<your_sleep_mode>`; the master
