@@ -392,6 +392,38 @@ blueprint:
               step: 0.5
               unit_of_measurement: deg
               mode: box
+        away_idle_high:
+          name: Away - high limit / band high (deg)
+          description: >
+            Replaces the high limit above while the house is AWAY (house-mode
+            selector = the "Away" value, or the home toggle off with nobody in the
+            presence zone). Any other selector value - e.g. Normal or Bypass -
+            uses the normal limits. Letting the empty house drift warmer saves
+            energy (less heat soaks in when it's closer to the outdoor
+            temperature). Rooms still hold their own away setpoints. Set it equal
+            to the normal high limit to turn the away band off. Default 82.
+          default: 82
+          selector:
+            number:
+              min: 60
+              max: 90
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
+        away_idle_low:
+          name: Away - band low (deg)
+          description: >
+            Replaces the band low above while the house is away (same rule as the
+            away high limit). Set it equal to the normal band low to turn it off.
+            Default 62.
+          default: 62
+          selector:
+            number:
+              min: 50
+              max: 78
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
 
     purge_section:
       name: Away Circulation Purge (optional)
@@ -607,6 +639,8 @@ variables:
   idle_mode: !input idle_mode
   idle_high: !input idle_high
   idle_low: !input idle_low
+  away_idle_high: !input away_idle_high
+  away_idle_low: !input away_idle_low
   purge_enabled: !input purge_enabled
   purge_interval_hours: !input purge_interval_hours
   purge_minutes: !input purge_minutes
@@ -650,6 +684,14 @@ variables:
   want_eco: >
     {{ not force_off
        and (hm_away or (away_action == 'eco_preset' and not home)) }}
+  # Is the house away? The selector's Away / Vacation value, or presence says
+  # nobody is home. Any other selector value (Normal, Bypass, ...) falls back to
+  # presence, so Bypass behaves exactly like Normal.
+  house_away: "{{ hm_vacation or hm_away or not home }}"
+  # Effective idle band / cap: the wider away limits while away, else the normal
+  # ones. Used by the cap, the hold band, and the status line.
+  band_high: "{{ away_idle_high if house_away else idle_high }}"
+  band_low: "{{ away_idle_low if house_away else idle_low }}"
   # --- priority arbitration ---
   # First demand helper (in priority order) that is calling wins the direction.
   room_dir: >
@@ -672,8 +714,8 @@ variables:
   cap_sensed: "{{ cap_sensed_raw | float(0) }}"
   cap_active: >
     {{ cap_enabled and is_number(cap_sensed_raw) and room_dir == 'none'
-       and (cap_sensed > idle_high
-            or (main_dir == 'cool' and cap_sensed > idle_high - 0.5)) }}
+       and (cap_sensed > band_high
+            or (main_dir == 'cool' and cap_sensed > band_high - 0.5)) }}
   # A room's demand wins; otherwise the cap can force cooling (in "cap" mode).
   winner_dir: "{{ room_dir if room_dir != 'none' else ('cool' if cap_active else 'none') }}"
   # --- away circulation purge ---
@@ -681,8 +723,7 @@ variables:
   # open (mold / condensation prevention). purge_until stores when the current
   # window ends; the last window START is (purge_until - duration), so the next
   # purge is due one interval after that. An unset helper reads as 0 => due now,
-  # so the first purge fires as soon as the house is away.
-  house_away: "{{ hm_vacation or hm_away or not home }}"
+  # so the first purge fires as soon as the house is away (house_away above).
   now_ts: "{{ as_timestamp(now()) }}"
   purge_until_ts: "{{ as_timestamp(states(purge_until), 0) if purge_until is string else 0 }}"
   purge_window_s: "{{ (purge_minutes | float(0)) * 60 }}"
@@ -704,8 +745,8 @@ variables:
   main_tth: "{{ state_attr(main_climate, 'target_temp_high') }}"
   idle_band_set: >
     {{ main_state == 'heat_cool' and is_number(main_ttl) and is_number(main_tth)
-       and (main_ttl | float(0) - idle_low) | abs < 0.5
-       and (main_tth | float(0) - idle_high) | abs < 0.5 }}
+       and (main_ttl | float(0) - band_low) | abs < 0.5
+       and (main_tth | float(0) - band_high) | abs < 0.5 }}
   # Is any room still calling in the direction the unit is currently running?
   current_dir_still_calling: >
     {{ main_dir in ['heat', 'cool']
@@ -753,12 +794,17 @@ variables:
          (primary_open_count < min_open_zones_cool) if (relief_ride_list | count > 0)
          else (cool_callers < min_open_zones_cool)
        ) }}
-  # Pressure relief is needed when: every room is closed (any mode), OR - while
-  # cooling - fewer than the minimum zones are open (open the theater as an extra
-  # path so we never run through a single small zone).
+  # Pressure relief (theater) is needed when: every room damper is closed (any
+  # mode), OR - while the unit is cooling FOR A ROOM - fewer than the minimum zones
+  # are open. The idle heat_cool band deliberately does NOT count as "cooling for a
+  # room": with nobody calling there are never 2 room dampers open, so the old rule
+  # held the theater open the whole time the house idled and dumped every band
+  # cool-down into it. In the idle band the ride-along room (server) is the relief
+  # path, and the theater only opens if every room damper is closed.
+  cooling_for_room: "{{ main_state == 'cool' or winner_dir == 'cool' }}"
   relief_needed: >
     {{ all_others_closed
-       or (main_state in ['cool', 'heat_cool'] and open_room_count < min_open_zones_cool) }}
+       or (cooling_for_room and open_room_count < min_open_zones_cool) }}
   # The theater opens as the relief valve exactly when relief is needed. This is
   # published to theater_relief_helper (the theater's Room Zone opens on it) and,
   # in the legacy setup only, drives relief_damper directly. Guest-room service is
@@ -837,10 +883,10 @@ variables:
   # Headline: the action, merged with the room(s) it is for (no redundant repeat).
   status_headline: >-
     {%- if force_off -%}Off
-    {%- elif winner_dir == 'none' and idle_hold -%}Idle · {{ idle_low | round(0) | int }}-{{ idle_high | round(0) | int }}° band
+    {%- elif winner_dir == 'none' and idle_hold -%}Idle · {{ band_low | round(0) | int }}-{{ band_high | round(0) | int }}° band{{ ' (away)' if house_away else '' }}
     {%- elif winner_dir == 'none' -%}Off · no demand
     {%- elif need_flip and not allow_flip -%}Waiting to {{ status_verb_lc }} · cooldown {{ mins_since_change | round(0) | int }}/{{ min_changeover }}m{% if status_win_rooms %}: {{ status_win_rooms }}{% endif %}
-    {%- else -%}{{ status_verb }}{% if status_win_rooms %}: {{ status_win_rooms }}{% elif cap_active %} · hallway over {{ idle_high | round(0) | int }}°{% endif %}
+    {%- else -%}{{ status_verb }}{% if status_win_rooms %}: {{ status_win_rooms }}{% elif cap_active %} · hallway over {{ band_high | round(0) | int }}°{% endif %}
     {%- endif -%}
   # House mode (incl. Home Day vs Home Night).
   status_mode: >-
@@ -1082,8 +1128,8 @@ action:
                             target:
                               entity_id: !input main_climate
                             data:
-                              target_temp_low: "{{ idle_low }}"
-                              target_temp_high: "{{ idle_high }}"
+                              target_temp_low: "{{ band_low }}"
+                              target_temp_high: "{{ band_high }}"
             # Off / cap modes with nothing calling -> switch the unit off.
             default:
               - condition: template

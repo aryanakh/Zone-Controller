@@ -120,6 +120,14 @@ resumes. (Omitted from the per-room lists below for brevity — set it on each.)
   it's more than 2° past its setpoint, so lower-priority rooms yield to it **only
   in extreme cases** (e.g. 75° when it needs 70°) and stop once it recovers to
   ~72°. (Leave its own "Yield to..." unset — the nursery never yields.)
+- **Door / Window Pause** → *Pause while this is open*: your nursery door sensor
+  (`binary_sensor.<nursery_door>`) · *Pause after open for*: **3** min. Once the
+  door has been open 3 minutes, the nursery stops calling and closes its damper
+  (status `Paused - door open`), so the system doesn't try to cool a room that's
+  open to the hallway. It resumes the moment the door closes. This doesn't touch
+  `nursery_enabled`, so **remove any automation of your own that toggles
+  `nursery_enabled` from the door** — the two would fight, and a missed "door
+  closed" event could leave the nursery switched off.
 
 ### Master bedroom (priority 2 — occupancy, cool-only, sleep, 2 dampers)
 - Room enable toggle: `input_boolean.master_enabled`
@@ -242,6 +250,9 @@ the coordinator says relief is needed.
   `input_boolean.zc_theater_relief` — **required.** This is how the theater stays
   the relief valve: the coordinator turns this flag on whenever the duct needs a
   relief path, and the theater opens regardless of guest mode or yielding.
+- **Force-open floor:** **70** — the theater stops acting as the relief valve once
+  it's at or below 70°, so it can't be dumped down to 67°. Its air goes to the
+  hallway and the server instead. (0 turns the floor off.)
 
 > **Trade-off to know:** because the guest room yields to the master, on a night
 > when the master is pre-cooling to its sleep target for a long time the theater
@@ -335,6 +346,14 @@ Create **one** automation from the **Coordinator** blueprint:
   - High limit / band high: **76** — the `heat_cool` cool target (or, in cap
     mode, the temperature above which cooling is forced).
   - Band low: **64** — the `heat_cool` heat target (band mode only).
+  - **Away - high limit / band low:** **82** / **62** — used instead of 76 / 64
+    while the house is **away**: the selector reads **Away**, or the home toggle
+    is off with nobody in the presence zone. Every other selector value —
+    including **Bypass** and **Normal** — uses the normal 64–76, so Bypass behaves
+    exactly like Normal. The status line shows `Idle · 62-82° band (away)`. Set
+    them equal to the normal limits to turn the away band off.
+  - While idling, the **server** (riding along) is the relief path when the band
+    cools the house; the theater only opens if every room damper is closed.
   - A room's own demand always takes priority over the idle backstop. **Band mode
     requires Setpoint Force-Run (below) to be enabled:** while idling the band
     uses the unit's native dual-setpoint control, but when a room starts calling
@@ -472,11 +491,13 @@ satisfied. The target is clamped between the floor and ceiling.
      turns **on** and the **server** takes over as the relief.
    - A genuinely hot server (over its setpoint) always opens on its own,
      regardless of any of the above.
-   - **Theater relief (guest mode off).** With guest mode off, close every room
-     damper (nothing calling): `input_boolean.zc_theater_relief` turns **on** and
-     the theater's status reads `Relief valve open (pressure relief)` with
-     `switch.damper_theater` **off** (open). Make a room call so 2 zones open → the
-     flag turns **off** and the theater closes (status `Off (disabled)`).
+   - **Theater relief (guest mode off).** With nothing calling and the unit idling
+     in the band, the **server rides along** and `zc_theater_relief` stays **off**
+     (the theater is no longer held open all the time the house idles). Force the
+     server below its ride-along floor so every room damper is closed →
+     `zc_theater_relief` turns **on** and the theater's status reads
+     `Relief valve open (pressure relief)`. Let the theater drop to 70° → status
+     `Relief held closed - … at/below the 70° floor` and its damper closes.
    - **Guest room mode.** Turn on `input_boolean.theater_guest_mode` and set the
      theater above its cool setpoint: `input_text.theater_demand` goes `cool`, the
      unit runs cool, and `switch.damper_theater` goes **off** (open) to serve it.
@@ -504,10 +525,17 @@ satisfied. The target is clamped between the floor and ceiling.
    Rooms without an away setpoint just use their normal setpoints. Mode = `Eco Away`.
 9. **Idle band.** With every room satisfied (nobody calling) and idle behavior
    set to **hold band**, the unit should sit in `heat_cool` on the 64–76 band
-   (`Idle - holding 64-76° band` in the status line) — cooling if the house
-   exceeds 76, heating below 64, otherwise coasting. (In **cap** mode instead, it
-   stays off until the hallway passes 76, then shows
-   `Starting cooling (hallway over 76°)`.)
+   (`Idle · 64-76° band` in the status line) — cooling if the house exceeds 76,
+   heating below 64, otherwise coasting. If the band is **heating**, the server
+   does **not** ride along (it's never heated). (In **cap** mode instead, it stays
+   off until the hallway passes 76, then shows `Cooling · hallway over 76°`.)
+   - **Away band.** Set the selector to **Away** (or turn the home toggle off with
+     nobody near): the band widens to 62–82 (`Idle · 62-82° band (away)`). Set it
+     to **Bypass** with the home toggle on → back to 64–76, same as Normal.
+   - **Nursery door.** Open the nursery door: for the first 3 minutes nothing
+     changes; after that its status reads `Paused - door open`,
+     `input_text.nursery_demand` goes `none`, and its damper closes. Close the
+     door → it resumes right away (`nursery_enabled` is never touched).
 10. **House mode.** Set the house-mode selector to **Away** → within ~2 min the
    unit switches to the eco preset but keeps running. Set it to **Vacation** →
    the unit turns off entirely (server room included). Set it back to **Home** →

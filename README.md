@@ -240,7 +240,13 @@ Full step-by-step field values and a verification checklist are in
   **Away** forces the eco preset (Eco mode), **Vacation** turns the unit off.
 - **Idle backstop** — when no room is calling, choose what the unit does: turn
   off, hold a cooling-only high cap, or hold a `heat_cool` safety band (default
-  64–76 °F) so the whole house never drifts too hot *or* too cold.
+  64–76 °F) so the whole house never drifts too hot *or* too cold. While the
+  house is **away** it automatically widens (default 62–82 °F) to save energy;
+  any other house mode (e.g. Bypass) uses the normal band.
+- **Door / window pause** — a room can watch a door sensor: once the door has
+  been open for a few minutes, the room stops calling and closes its damper, and
+  it resumes as soon as the door closes. No more cooling a nursery that's open
+  to the hallway.
 - **Away circulation purge** — while the house is away (or on vacation),
   periodically run the blower in fan-only with every damper open to move air
   through all the ducts and discourage stagnant-air mold / condensation. It never
@@ -266,7 +272,9 @@ Full step-by-step field values and a verification checklist are in
   the useful second zone, but **only when it's actually needed** — while enough
   higher-priority rooms are already calling, it stays closed so the full airflow
   goes to them until one reaches temperature; the theater damper is the automatic
-  last-resort backstop.
+  last-resort backstop, with a temperature floor so it can't be over-cooled. The
+  server also handles relief while the house idles in its band, and is never
+  given heat when the band heats.
 - **Day-only yield** *(optional)* — a room can be told to yield to a
   higher-priority room only during the day. At night it keeps its damper open and
   serves as the cooling-relief zone instead — e.g. the master focuses air on the

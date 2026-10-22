@@ -117,6 +117,40 @@ blueprint:
               filter:
                 - domain: climate
 
+    door_section:
+      name: Door / Window Pause (optional)
+      icon: mdi:door-open
+      collapsed: true
+      input:
+        pause_sensor:
+          name: Pause while this is open
+          description: >
+            Optional door / window binary_sensor (on = open). Once it has been
+            open for the delay below, the room PAUSES: it stops calling for
+            heating/cooling and closes its damper, so the system doesn't try to
+            condition a room that's open to the rest of the house. It resumes as
+            soon as the door closes. Independent of the Enable toggle, so it can
+            never leave the room switched off. A purge or force-open still opens
+            the damper.
+          default: {}
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+        pause_open_delay:
+          name: Pause after open for (minutes)
+          description: >
+            How long the door must stay open before the room pauses, so a quick
+            in-and-out doesn't toggle it. 0 = pause immediately.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 60
+              step: 1
+              unit_of_measurement: min
+              mode: box
+
     setpoints_section:
       name: Setpoints
       icon: mdi:target
@@ -349,6 +383,23 @@ blueprint:
             entity:
               filter:
                 - domain: input_boolean
+        force_open_floor:
+          name: Force-open floor (deg, 0 = no floor)
+          description: >
+            Stop honoring the force-open flag once this room is at or below this
+            temperature, so the relief valve can't be over-cooled (e.g. the
+            theater being dumped down to 67°). Its air then goes to the other open
+            paths (the always-open hallway, a ride-along room). Applies only to
+            force-open, never to the room's own demand. A purge still opens the
+            damper. 0 disables the floor. Suggested for the theater: 70.
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 85
+              step: 0.5
+              unit_of_measurement: deg
+              mode: box
 
     schedule_section:
       name: Scheduled Activation (optional)
@@ -518,6 +569,9 @@ variables:
   ride_along_gate: !input ride_along_gate
   purge_until: !input purge_until
   force_open_boolean: !input force_open_boolean
+  force_open_floor: !input force_open_floor
+  pause_sensor: !input pause_sensor
+  pause_open_delay: !input pause_open_delay
   active_after: !input active_after
   active_until: !input active_until
   schedule_requires_home: !input schedule_requires_home
@@ -591,10 +645,21 @@ variables:
        else (occupancy_sensor is string and is_state(occupancy_sensor, 'on'))
          if zone_mode == 'occupancy'
        else true }}
-  # Hard gate: enabled AND (mode-eligible OR inside the scheduled window OR away OR
-  # comfort boost - away keeps the room eligible so it can be capped at its away
-  # setpoint; boost keeps it eligible so it cools to the sleep target on demand).
-  active: "{{ enabled_on and (mode_active or schedule_active or away_active or boost_active) }}"
+  # Door / window pause: once the sensor has been open for the delay, the room
+  # stops calling and closes its damper (it resumes the moment it closes).
+  door_open: "{{ pause_sensor is string and is_state(pause_sensor, 'on') }}"
+  door_open_since: >
+    {{ as_timestamp((expand(pause_sensor) | first).last_changed, 0) if door_open else 0 }}
+  door_paused: >
+    {{ door_open
+       and (as_timestamp(now()) - door_open_since) >= (pause_open_delay | float(0)) * 60 }}
+  # Hard gate: enabled AND not paused by an open door AND (mode-eligible OR inside
+  # the scheduled window OR away OR comfort boost - away keeps the room eligible so
+  # it can be capped at its away setpoint; boost keeps it eligible so it cools to
+  # the sleep target on demand).
+  active: >
+    {{ enabled_on and not door_paused
+       and (mode_active or schedule_active or away_active or boost_active) }}
   # Raw directional demand with a true two-sided deadband, independent of the
   # unit's mode. The room's own last-published demand (in demand_helper) is the
   # state memory: engage above cool_sp+hyst, then hold 'cool' until temp drops
@@ -665,9 +730,16 @@ variables:
   # closed while enough higher-priority rooms already provide the open zones.
   ride_along_allowed: >
     {{ ride_along_gate is not string or is_state(ride_along_gate, 'on') }}
+  # Is the unit delivering (or ready to deliver) COLD air? In heat_cool (the idle
+  # band) it can be heating instead, so check hvac_action - riding along then would
+  # put heat into a cool-only room (e.g. the server).
+  main_action: "{{ state_attr(main_climate, 'hvac_action') }}"
+  unit_cooling: >
+    {{ main_mode == 'cool'
+       or (main_mode == 'heat_cool' and main_action != 'heating') }}
   cool_riding: >
     {{ cool_ride_along and ride_along_allowed and enable_cool and cool_sp_valid
-       and main_mode in ['cool', 'heat_cool']
+       and unit_cooling
        and temp_valid and temp > (cool_sp - cool_ride_along_margin) }}
   # Away circulation purge: while the coordinator's purge window is open, force
   # this room's damper OPEN so the fan can move air through its duct (mold /
@@ -677,7 +749,13 @@ variables:
        and as_timestamp(now()) < as_timestamp(states(purge_until), 0) }}
   # Force-open flag (e.g. the coordinator's theater relief output): hold the
   # damper open regardless of demand or enable, as the pressure-relief valve.
-  forced_open: "{{ force_open_boolean is string and is_state(force_open_boolean, 'on') }}"
+  # ...unless the room is already at/below the force-open floor (so the relief
+  # valve can't be over-cooled). An unreadable sensor never blocks relief.
+  force_flag_on: "{{ force_open_boolean is string and is_state(force_open_boolean, 'on') }}"
+  force_below_floor: >
+    {{ (force_open_floor | float(0)) > 0 and temp_valid
+       and temp <= (force_open_floor | float(0)) }}
+  forced_open: "{{ force_flag_on and not force_below_floor }}"
   should_open: >
     {{ purging or forced_open or (active and not priority_served and (
          (raw_demand == 'cool' and main_mode in ['cool', 'heat_cool']) or
@@ -691,7 +769,9 @@ variables:
     {%- if bypassed -%}Manual override ON - not controlling this damper
     {%- elif purging -%}Circulation purge - damper open, fan circulating (mold prevention){% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
     {%- elif forced_open and not (enabled_on and active and raw_demand in ['cool', 'heat']) -%}Relief valve open (pressure relief){% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
+    {%- elif force_flag_on and force_below_floor and not (enabled_on and active and raw_demand in ['cool', 'heat']) -%}Relief held closed - {{ temp | round(1) }}° is at/below the {{ force_open_floor | float(0) | round(1) }}° floor
     {%- elif not enabled_on -%}Off (disabled)
+    {%- elif door_paused -%}Paused - door open{% if temp_valid %} - {{ temp | round(1) }}°{% endif %}
     {%- elif not temp_valid -%}No temperature reading
     {%- elif not active -%}Idle - {{ temp | round(1) }}° (not eligible: occupancy/schedule)
     {%- elif raw_demand == 'cool' -%}Cooling{{ ' (relief valve open)' if forced_open else ' (yielding to priority)' if priority_served else '' }} - {{ temp | round(1) }}° vs {{ cool_sp | round(1) }}° target ({{ sp_tag }})
@@ -709,8 +789,21 @@ trigger_variables:
   t_boost: !input boost_boolean
   t_force_open: !input force_open_boolean
   t_ride_gate: !input ride_along_gate
+  t_pause: !input pause_sensor
+  t_pause_delay: !input pause_open_delay
 
 trigger:
+  # Door open long enough -> pause (re-checked every minute because of now()).
+  - platform: template
+    value_template: >
+      {{ t_pause is string and is_state(t_pause, 'on')
+         and (as_timestamp(now()) - as_timestamp((expand(t_pause) | first).last_changed, 0))
+             >= (t_pause_delay | float(0)) * 60 }}
+    id: door_pause
+  # Door closed -> resume immediately.
+  - platform: template
+    value_template: "{{ t_pause is string and is_state(t_pause, 'off') }}"
+    id: door_closed
   - platform: template
     value_template: "{{ t_boost is string and is_state(t_boost, 'on') }}"
     id: boost_on
